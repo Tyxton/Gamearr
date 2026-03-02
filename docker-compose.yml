@@ -1,0 +1,14 @@
+services:
+  gamearr:
+    build: .
+    container_name: gamearr
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data:/app/data # SQLite DB Location
+      - /your/tmp/staging/directory:/downloads # I recommend using /opt/gamearr/staging:
+      - /your/game/library:/library
+    env_file:
+      - .env
+
