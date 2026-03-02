@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GameArr - MSF</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link rel="stylesheet" href="css/variables.css">
+    <link rel="stylesheet" href="css/layout.css">
+    <link rel="stylesheet" href="css/components.css">
+</head>
+<body>
+    <div class="app-container">
+        <aside class="sidebar">
+            <div class="brand">
+                <i class="fa-solid fa-gamepad brand-icon"></i>
+                <span class="brand-text">GameArr</span>
+            </div>
+            <nav class="nav-menu">
+                <div class="nav-group">
+                    <div class="nav-link-wrapper">
+                        <a href="#" class="nav-link active" data-view="library">
+                            <i class="fa-solid fa-play"></i> Library
+                        </a>
+                        <i class="fa-solid fa-chevron-down nav-chevron" id="library-chevron"></i>
+                    </div>
+                    <div class="nav-dropdown" id="library-dropdown">
+                        <a href="#" class="nav-link sub-link" data-view="add-new">
+                            <i class="fa-solid fa-plus"></i> Add New
+                        </a>
+                    </div>
+                </div>
+                
+                <a href="#" class="nav-link" data-view="calendar"><i class="fa-solid fa-calendar-days"></i> Calendar</a>
+                <a href="#" class="nav-link" data-view="queue"><i class="fa-solid fa-clock"></i> Activity <span class="badge">12</span></a>
+                <a href="#" class="nav-link" data-view="wanted"><i class="fa-solid fa-triangle-exclamation"></i> Wanted</a>
+                <a href="#" class="nav-link" data-view="settings"><i class="fa-solid fa-gear"></i> Settings</a>
+                <a href="#" class="nav-link" data-view="system"><i class="fa-solid fa-laptop"></i> System</a>
+            </nav>
+        </aside>
+
+        <div class="main-column">
+            <header class="top-header">
+                <div class="search-container">
+                    <i class="fa-solid fa-magnifying-glass search-icon"></i>
+                    <input type="text" class="search-input" placeholder="Search">
+                </div>
+                <div class="header-actions">
+                    <i class="fa-solid fa-heart action-icon" style="color: #e74c3c;"></i>
+                    <i class="fa-solid fa-user action-icon"></i>
+                </div>
+            </header>
+
+            <div class="toolbar">
+                <div class="toolbar-group">
+                    <button class="toolbar-btn"><i class="fa-solid fa-rotate"></i><span>Update All</span></button>
+                    <button class="toolbar-btn"><i class="fa-solid fa-rss"></i><span>RSS Sync</span></button>
+                </div>
+                <div class="toolbar-separator"></div>
+                <div class="toolbar-group">
+                    <button class="toolbar-btn"><i class="fa-solid fa-check"></i><span>Select Games</span></button>
+                    <button class="toolbar-btn"><i class="fa-solid fa-calculator"></i><span>Test Parsing</span></button>
+                </div>
+                <div class="toolbar-spacer"></div>
+                <div class="toolbar-group right-aligned">
+                    <button class="toolbar-btn"><i class="fa-solid fa-table-cells"></i><span>Options</span></button>
+                    <button class="toolbar-btn"><i class="fa-solid fa-eye"></i><span>View</span></button>
+                    <button class="toolbar-btn"><i class="fa-solid fa-sort"></i><span>Sort</span></button>
+                    <button class="toolbar-btn"><i class="fa-solid fa-filter"></i><span>Filter</span></button>
+                </div>
+            </div>
+
+            <main class="content-area" id="main-content">
+                </main>
+        </div>
+    </div>
+
+    <script src="js/api.js"></script>
+    <script src="js/app.js"></script>
+</body>
+</html>
