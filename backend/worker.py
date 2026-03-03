@@ -11,29 +11,31 @@ def start_worker():
 
     while True:
         try:
-        # check for next pending game
-        get_next = database.get_next_queued_task()
-        break
-    except Exception:
-        time.sleep(2)
+            # check for next pending game
+            get_next = database.get_next_queued_task()
+            break
+        except Exception:
+            time.sleep(2)
+            print("Database Ready. Monitoring queue...")
 
-        print("Database ready. Monitoring queue...")
+    while True:
+        try:
+            get_next = database.get_next_queued_task()
 
-        if not get_next:
-            # if nothing in queue, rest for 30 seconds
-            time.sleep(30)
-            continue
-        
-        title_id = get_next['title_id']
-        name = get_next['name']
-        platform = get_next['platform']
-        pkg_url = get_next['pkg_url']
-        license_key = get_next['license_key']
+            if not get_next:
+                time.sleep(30)
+                continue
 
-        print(f"\nFound in queue: {name} ({platform.upper()})")
+            title_id = get_next['title_id']
+            name = get_next['name']
+            platform = get_next['platform']
+            pkg_url = get_next['pkg_url']
+            license_key = get_next['license_key']
 
-        # update status
-        database.update_queue_status(title_id, 'downloading')
+            print(f"\nFound in queue: {name} ({platform.upper()})")
+
+            # update status
+            database.update_queue_status(title_id, 'downloading')
 
         # initiate the download
         try:
@@ -75,6 +77,7 @@ def start_worker():
         except Exception as e:
             print(f"Error during {name}: {e}")
             database.update_queue_status(title_id, 'error')
+            time.sleep(10)
 
 if __name__ == "__main__":
     start_worker()
