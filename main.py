@@ -16,7 +16,7 @@ LIBRARY_DIR = os.getenv("LIBRARY_DIR", "/library")
 
 # --- INITIALIZATION ---
 @asynccontextmanager
-async def lifespan(app: FastAPI)
+async def lifespan(app: FastAPI):
     '''Initialize system on container boot.'''
     print("Syncing Database...")
     database.init_db()
