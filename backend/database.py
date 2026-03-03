@@ -118,13 +118,24 @@ def get_all_games(limit=50):
     '''
     df = pd.read_sql_query(sql, conn, params=(limit,))
     conn.close()
+    
+    df = df.where(pd.notnull(df), None)
+
     return df
 
 def search_game_db(query):
     conn = get_db_connection()
-    sql = "SELECT platform, title_id, region, name, pkg_url, license_key FROM games WHERE name LIKE ?"
+    sql = '''
+        SELECT g.platform, g.title_id, g.region, g.name, g.pkg_url, g.license_key, m.cover_url
+        FROM games g
+        LEFT JOIN metadata m ON g.title_id = m.title_id
+        WHERE g.name = LIKE ?
+    '''
     df = pd.read_sql_query(sql, conn, params=(f'%{query}%',))
     conn.close()
+    
+    df = df.where(pd.notnull(df), None)
+
     return df
 
 def add_to_queue(platform, title_id, region, name, status, pkg_url, license_key):
