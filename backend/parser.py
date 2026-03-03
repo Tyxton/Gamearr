@@ -22,38 +22,40 @@ def sync_database():
                 print(f"New {platform.upper()} manifest available. Parsing and seeding to database...")
                 data = StringIO(response.text)
                 
-                # Direct load with only the columns needed
-                cols = ['Title ID', 'Region', 'Name', 'PKG direct link']
-                # NPS headers vary slightly between platforms; handle zRIF/RAP specifically
-                df = pd.read_csv(data, sep='\t', usecols=lambda x: x in cols or x in ['zRIF', 'RAP'])
+                # preload the TSV to avoid 'usecols' mismatch errors
+                df = pd.read_csv(data, sep='\t')
 
-                # Normalize the license key column
-                if 'zRIF' in df.columns:
-                    df['license_key'] = df['zRIF'].fillna("MISSING")
-                elif 'RAP' in df.columns:
-                    df['license_key'] = df['RAP'].fillna("MISSING")
-                else:
-                    df['license_key'] = "MISSING"
+                # Normalize column names (NPS can be inconsistent)
+                # Maps their headers to our variables
+                mapping = {
+                        'Title ID': 'title_id',
+                        'Region': 'region',
+                        'Name': 'name',
+                        'PKG direct link': 'pkg_url',
+                        'PKG': 'pkg_url',
+                        'zRIF': 'license_key',
+                        'RAP': 'license_key'
+                }
 
                 # Rename columns to match DB schema
-                df = df.rename(columns={
-                    'Title ID': 'title_id',
-                    'Region': 'region',
-                    'Name': 'name',
-                    'PKG direct link': 'pkg_url'
-                })
+                df = df.rename(columns=mapping)
+
+                # explicitly set the platform 
                 df['platform'] = platform
+
+                # Reorder and reliter to ONLY the 6 columns in the database scheme
+                db_ready_df = df[['title_id', 'platform', 'region', 'name', 'pkg_url', 'license_key']].copy()
 
                 # BATCH INSERT:
                 # Instead of 10,000 individual calls, use pandas a batch insert
                 conn = database.get_db_connection()
                 try:
+                    # Clear old entries for this platform to prevent Primary Key conflics
                     conn.execute("DELETE FROM games WHERE platform = ?", (platform,))
-                    
-                    df[['title_id', 'platform', 'region', 'name', 'pkg_url', 'license_key']].to_sql(
-                        'games', conn, if_exists='append', index=False
-                    )
-                    conn.commit()
+
+                    # Use 'append' because the rows have been cleared
+                    db_ready_df.to_sql('games', conn, if_exists='append', index=False)
+                    conn.close()
                 finally:
                     conn.close()
 
