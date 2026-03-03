@@ -1,6 +1,7 @@
 import os
 import sqlite3
 import pandas as pd
+import numpy as np
 
 # Fallback to local if the ENV isn't set (like during local dev)
 DB_PATH = os.getenv("DB_PATH", "/app/data/gamearr.db")
@@ -119,8 +120,8 @@ def get_all_games(limit=50):
     df = pd.read_sql_query(sql, conn, params=(limit,))
     conn.close()
     
-    df = df.where(pd.notnull(df), None)
-
+    # sanitize, see search_game_db below
+    df = df.astype(object).replace({np.nan: None})
     return df
 
 def search_game_db(query):
@@ -134,9 +135,11 @@ def search_game_db(query):
     df = pd.read_sql_query(sql, conn, params=(f'%{query}%',))
     conn.close()
     
-    df = df.where(pd.notnull(df), None)
+    # force datafram to object to prevent pandas from reverting none to NaN 
+    # then replace all numpy NaN values with Python None
+    df = df.astype(object).replace({np.nan: None})
 
-    return df.to_dict(orient='records')
+    return df.to_dict(orient='records') # Should now be a safe list of dicts
 
 def add_to_queue(platform, title_id, region, name, pkg_url, license_key):
     conn = get_db_connection()

@@ -42,8 +42,7 @@ def search_games(q: str = Query(..., min_length=2)):
     '''Search games in local SQLite Cache first.'''
     results = database.search_game_db(q)
     if not results:
-        return []
-    return results
+    return {"results": results}
 
 @app.get("/api/details/{title_id}")
 def get_game_details(title_id: str, name: str):
