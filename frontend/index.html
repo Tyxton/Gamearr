@@ -10,7 +10,23 @@
     <link rel="stylesheet" href="css/components.css">
 </head>
 <body>
-    <div class="app-container">
+            <header class="top-header">
+                <div class="brand">
+                    <i class="fa-solid fa-gamepad brand-icon"></i>
+                    <span class="brand-text">GameArr</span>
+                </div>
+                <div class="search-container">
+                    <i class="fa-solid fa-magnifying-glass search-icon"></i>
+                    <input type="text" class="search-input" placeholder="Search">
+                </div>
+                <div class="header-actions">
+                    <i class="fa-solid fa-heart action-icon" style="color: #e74c3c;"></i>
+                    <i class="fa-solid fa-user action-icon"></i>
+                </div>
+            </header>
+
+        <div class="main-content">
+        <div class="app-container">
         <aside class="sidebar">
             <nav class="nav-menu">
                 <div class="nav-group">
@@ -35,22 +51,7 @@
             </nav>
         </aside>
 
-        <div class="main-column">
-            <div class="brand">
-                <i class="fa-solid fa-gamepad brand-icon"></i>
-                <span class="brand-text">GameArr</span>
-            </div>
-            <header class="top-header">
-                <div class="search-container">
-                    <i class="fa-solid fa-magnifying-glass search-icon"></i>
-                    <input type="text" class="search-input" placeholder="Search">
-                </div>
-                <div class="header-actions">
-                    <i class="fa-solid fa-heart action-icon" style="color: #e74c3c;"></i>
-                    <i class="fa-solid fa-user action-icon"></i>
-                </div>
-            </header>
-
+            <div class="page-content">
             <div class="toolbar">
                 <div class="toolbar-group">
                     <button class="toolbar-btn"><i class="fa-solid fa-rotate"></i><span>Update All</span></button>
@@ -72,6 +73,7 @@
 
             <main class="content-area" id="main-content">
                 </main>
+            </div>
         </div>
     </div>
     
