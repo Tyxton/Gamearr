@@ -10,6 +10,17 @@ MANIFESTS = {
 } 
 
 def sync_database():
+    
+    mapping = {
+            'Title ID': 'title_id',
+            'Region': 'region',
+            'Name': 'name',
+            'PKG direct link': 'pkg_url',
+            'PKG': 'pkg_url',
+            'zRIF': 'license_key',
+            'RAP': 'license_key',
+    }
+
     for platform, url in MANIFESTS.items():
         config_key = f"tsv_last_modified_{platform}"
         last_modified = database.get_config(config_key)
@@ -42,6 +53,11 @@ def sync_database():
                 
                 # THEN replace internal NaNs with 'MISSING' before sql
                 db_ready_df = db_ready_df.fillna('MISSING')
+                
+                # Just in case, make sure any leftover NaN variables are Python None
+                import numpy as np
+                db_ready_df = db_ready_df.astype(object).replace({np.nan: None})
+
                 try:
                     # Clear old entries for this platform to prevent Primary Key conflics
                     conn.execute("DELETE FROM games WHERE platform = ?", (platform,))
