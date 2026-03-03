@@ -1,5 +1,6 @@
 import pandas as pd
 import requests
+import numpy as np
 from io import StringIO
 from backend import database
 
@@ -45,19 +46,27 @@ def sync_database():
                 df['platform'] = platform
                 
                 cols = ['title_id', 'platform', 'region', 'name', 'pkg_url', 'license_key']
-                df_ready_df = df[cols].copy()
-
-                # Drop invalid rows and DUPLICATE IDs -- PSX parsing fix
-                db_ready_df = db_ready_df.dropna(subset=['title_id', 'name'])
-                db_ready_df = db_ready_df.drop_duplicates(subset=['title-id'], keep='first')
                 
-                # THEN replace internal NaNs with 'MISSING' before sql
-                db_ready_df = db_ready_df.fillna('MISSING')
+                # create db_ready_df for ALL platforms
+                # ensuring variable always has a value
+                db_ready_df = df[[c for c in cols if c in df.columns]].copy()
+
+                # add missing columns
+                for missing_col in set(cols) - set(db_ready_df.columns):
+                    db_ready_df[missing_col] = None
+
+                # Apply PSX specific dedup 
+                if platform == "psx":
+                    # PSX has multi-disc entries that can crash the primary key constraint
+                    db_ready_df = db_ready_df.drop_duplicates(subset=['title_id', 'name'])
+                
+                # cleanup db_ready_df
+                db_ready_df = db_ready_df.dropna(subset=['title_id', 'name'])
                 
                 # Just in case, make sure any leftover NaN variables are Python None
-                import numpy as np
                 db_ready_df = db_ready_df.astype(object).replace({np.nan: None})
 
+                conn = database.get_db_connection()
                 try:
                     # Clear old entries for this platform to prevent Primary Key conflics
                     conn.execute("DELETE FROM games WHERE platform = ?", (platform,))
