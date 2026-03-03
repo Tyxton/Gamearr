@@ -37,23 +37,20 @@ def sync_database():
                 # preload the TSV to avoid 'usecols' mismatch errors
                 df = pd.read_csv(data, sep='\t', on_bad_lines='skip') # handle shifted headers
                 
-                # ensure the required columns exist before sclicing to prevent Key Error
-                for col in ['PKG', 'zRIF', 'RAP', 'PKG direct link']:
-                    if col not in df.columns:
-                        df[col] = "MISSING"
-
+                # map columns before init
                 df = df.rename(columns=mapping)
                 df['platform'] = platform
-                
-                cols = ['title_id', 'platform', 'region', 'name', 'pkg_url', 'license_key']
-                
-                # create db_ready_df for ALL platforms
-                # ensuring variable always has a value
-                db_ready_df = df[[c for c in cols if c in df.columns]].copy()
 
-                # add missing columns
-                for missing_col in set(cols) - set(db_ready_df.columns):
-                    db_ready_df[missing_col] = None
+                cols = ['title_id', 'platform', 'region', 'name', 'pkg_url', 'license_key']
+               
+                # we slice only the columns that exist, then add the ones that don't
+                existing_cols = [c for c in cols if c in df.columns]
+                db_ready_df = df[existing_cols].copy()
+                
+                # ensure the required columns exist before sclicing to prevent Key Error
+                for col in cols
+                    if col not in db_ready_df.columns:
+                        db_ready_df[col] = None
 
                 # Apply PSX specific dedup 
                 if platform == "psx":
