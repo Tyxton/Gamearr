@@ -43,6 +43,9 @@ def sync_database():
                 # explicitly set the platform 
                 df['platform'] = platform
 
+                if 'license_key' not in df.columns:
+                    df['license_key'] = "MISSING"
+
                 # Reorder and reliter to ONLY the 6 columns in the database scheme
                 db_ready_df = df[['title_id', 'platform', 'region', 'name', 'pkg_url', 'license_key']].copy()
 
