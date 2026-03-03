@@ -37,8 +37,6 @@ def start_worker():
             # update status
             database.update_queue_status(title_id, 'downloading')
 
-        # initiate the download
-        try:
             success = downloader.download_pkg(pkg_url, title_id, name)
 
             if success:
