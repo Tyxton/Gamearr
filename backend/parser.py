@@ -33,25 +33,19 @@ def sync_database():
             if response.status_code == 200:
                 print(f"New {platform.upper()} manifest available. Parsing and seeding to database...")
                 data = StringIO(response.text)
-                
                 # preload the TSV to avoid 'usecols' mismatch errors
                 df = pd.read_csv(data, sep='\t', on_bad_lines='skip') # handle shifted headers
                 
                 # map columns before init
                 df = df.rename(columns=mapping)
                 df['platform'] = platform
-
                 cols = ['title_id', 'platform', 'region', 'name', 'pkg_url', 'license_key']
                
-                # we slice only the columns that exist, then add the ones that don't
-                existing_cols = [c for c in cols if c in df.columns]
-                db_ready_df = df[existing_cols].copy()
+                # safely create db_ready_df
+                db_ready_df = df[[c for c in cols if c in df.columns]].copy()
+                for missing_col in set(cols) - set(db_ready_df.columns):
+                    db_ready_df[missing_col] = None
                 
-                # ensure the required columns exist before sclicing to prevent Key Error
-                for col in cols
-                    if col not in db_ready_df.columns:
-                        db_ready_df[col] = None
-
                 # Apply PSX specific dedup 
                 if platform == "psx":
                     # PSX has multi-disc entries that can crash the primary key constraint
@@ -67,10 +61,8 @@ def sync_database():
                 try:
                     # Clear old entries for this platform to prevent Primary Key conflics
                     conn.execute("DELETE FROM games WHERE platform = ?", (platform,))
-
-                    # Use 'append' because the rows have been cleared
                     db_ready_df.to_sql('games', conn, if_exists='append', index=False)
-                    conn.commit() # NOT conn.close() THIS WOULD'VE WORKED VERSIONS AGO HAD I CAUGHT THIS.
+                    conn.commit()
                 except Exception as e:
                     # Don't save anything on failure, rollback implicit
                     print(f"[!] Error: Database insertion failed for {platform}: {e}")
