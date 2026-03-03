@@ -23,40 +23,25 @@ def sync_database():
                 data = StringIO(response.text)
                 
                 # preload the TSV to avoid 'usecols' mismatch errors
-                df = pd.read_csv(data, sep='\t')
+                df = pd.read_csv(data, sep='\t', on_bad_lines='skip') # handle shifted headers
+                
+                # ensure the required columns exist before sclicing to prevent Key Error
+                for col in ['PKG', 'zRIF', 'RAP', 'PKG direct link']:
+                    if col not in df.columns:
+                        df[col] = "MISSING"
 
-                # Normalize column names (NPS can be inconsistent)
-                # Maps their headers to our variables
-                mapping = {
-                        'Title ID': 'title_id',
-                        'Region': 'region',
-                        'Name': 'name',
-                        'PKG direct link': 'pkg_url',
-                        'PKG': 'pkg_url',
-                        'zRIF': 'license_key',
-                        'RAP': 'license_key'
-                }
-
-                # Rename columns to match DB schema
                 df = df.rename(columns=mapping)
-
-                # explicitly set the platform 
                 df['platform'] = platform
+                
+                cols = ['title_id', 'platform', 'region', 'name', 'pkg_url', 'license_key']
+                df_ready_df = df[cols].copy()
 
-                if 'license_key' not in df.columns:
-                    df['license_key'] = "MISSING"
-
-                # Reorder and reliter to ONLY the 6 columns in the database scheme
-                # clean the data, drop rows without a title_id or name
-                db_ready_df = df[['title_id', 'platform', 'region', 'name', 'pkg_url', 'license_key']].copy()
+                # Drop invalid rows and DUPLICATE IDs -- PSX parsing fix
                 db_ready_df = db_ready_df.dropna(subset=['title_id', 'name'])
-
-                # drop duplicates
-                db_ready_df = db_ready_df.drop_duplicates(subset=['title_id'], keep='first')
-
-                # BATCH INSERT:
-                # Instead of 10,000 individual calls, use pandas a batch insert
-                conn = database.get_db_connection()
+                db_ready_df = db_ready_df.drop_duplicates(subset=['title-id'], keep='first')
+                
+                # THEN replace internal NaNs with 'MISSING' before sql
+                db_ready_df = db_ready_df.fillna('MISSING')
                 try:
                     # Clear old entries for this platform to prevent Primary Key conflics
                     conn.execute("DELETE FROM games WHERE platform = ?", (platform,))
