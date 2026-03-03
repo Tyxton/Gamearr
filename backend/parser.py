@@ -58,7 +58,7 @@ def sync_database():
                 # Apply PSX specific dedup 
                 if platform == "psx":
                     # PSX has multi-disc entries that can crash the primary key constraint
-                    db_ready_df = db_ready_df.drop_duplicates(subset=['title_id', keep='first'])
+                    db_ready_df = db_ready_df.drop_duplicates(subset=['title_id'], keep='first')
                 
                 # cleanup db_ready_df
                 db_ready_df = db_ready_df.dropna(subset=['title_id', 'name'])
