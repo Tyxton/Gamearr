@@ -201,6 +201,33 @@ document.addEventListener('DOMContentLoaded', () => {
             alert("Error: Failed to communicate with the server.");
         }
     };
+    
+    // --- Sidebar Submenu & Auto-Collapse Logic ---
+    const chevrons = document.querySelectorAll('.nav-chevron');
+    const sidebar = document.querySelector('.sidebar');
+
+    chevrons.forEach(chevron => {
+        chevron.addEventListener('click', (e) => {
+            e.stopPropagation(); // Prevent trigger of the parent nav-link
+            const dropdown = chevron.parentElement.nextElementSibling;
+        
+            // Toggle current menu
+            chevron.classList.toggle('open');
+            dropdown.classList.toggle('open');
+        });
+    });
+
+    // Close submenus when clicking outside the sidebar
+    document.addEventListener('click', (e) => {
+        if (!sidebar.contains(e.target)) {
+            document.querySelectorAll('.nav-dropdown.open').forEach(menu => {
+                menu.classList.remove('open');
+            });
+            document.querySelectorAll('.nav-chevron.open').forEach(chevron => {
+                chevron.classList.remove('open');
+            });
+        }
+    });
 
     // --- Detail Modal Logic ---
     window.showDetails = async (titleId, name) => {

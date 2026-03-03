@@ -5,6 +5,7 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from typing import List, Optional
+import shutil
 
 from backend import parser, database, metadata, scout
 from backend.downloader import get_safe_name
@@ -90,9 +91,30 @@ async def queue_endpoint(game: GamePayload):
 def view_queue():
     '''Return the current status of all downloads for the Dashboard.'''
     conn = database.get_db_connection()
-    queue = conn.execute("SELECT * FROM queue ORDER BY id DESC").fetchall()
+    queue = conn.execute("SELECT * FROM queue ORDER BY title_id DESC").fetchall()
     conn.close()
     return {"queue": [dict(row) for row in queue]}
+
+app.get("/api/system/health")
+def get_system_health():
+    ''' Returns disk usage and library stats'''
+    total, used, free = shutil.disk_usage(LIBRARY_DIR)
+    # get total games count
+    conn = database.get_db_connection()
+    game_count = conn.execute("SELECT COUNT(*) FROM games").fetchone()[0]
+    conn.close()
+
+    return {
+        "disk": {
+            "total": total,
+            "free": free,
+            "used": used,
+            "percent": round((used / total) * 100, 1)
+        },
+        "stats": {
+            "games": game_count
+        }
+    }
 
 # --- FRONTEND MOUNT ---
 app.mount("/", StaticFiles(directory="frontend", html=True), name="frontend")
