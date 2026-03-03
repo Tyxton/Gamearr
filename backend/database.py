@@ -129,7 +129,7 @@ def search_game_db(query):
         SELECT g.platform, g.title_id, g.region, g.name, g.pkg_url, g.license_key, m.cover_url
         FROM games g
         LEFT JOIN metadata m ON g.title_id = m.title_id
-        WHERE g.name = LIKE ?
+        WHERE g.name LIKE ?
     '''
     df = pd.read_sql_query(sql, conn, params=(f'%{query}%',))
     conn.close()

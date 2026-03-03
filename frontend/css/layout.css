@@ -83,6 +83,7 @@
     color: var(--text-menus);
     font-weight: bold;
     border-bottom: 1px solid var(--border);
+    flex: 0 0 var(--sidebar-width);
 }
 
 .brand-icon {
@@ -113,6 +114,12 @@
     font-size: 0.9rem;
 }
 
+.header-actions {
+    display: flex;
+    justify-content: flex-end;
+    flex-grow: 1;
+}
+
 .header-actions .action-icon {
     color: var(--text-muted);
     font-size: 1.1rem;
@@ -132,6 +139,13 @@
 }
 
 /* Content Area */
+.page-content {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    flex-grow: 1;
+    width: 100%;
+
 .content-area {
     flex-grow: 1;
     overflow-y: auto;
