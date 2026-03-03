@@ -138,15 +138,23 @@ def search_game_db(query):
 
     return df
 
-def add_to_queue(platform, title_id, region, name, status, pkg_url, license_key):
+def add_to_queue(platform, title_id, region, name, pkg_url, license_key):
     conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute('''
-        INSERT OR REPLACE INTO queue (platform, title_id, region, name, status, pkg_url, license_key)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
-    ''', (platform, title_id, region, name, status, pkg_url, license_key))
-    conn.commit()
-    conn.close()
+    try:
+        conn.execute('''
+            INSERT OR REPLACE INTO queue (
+                platform, title_id, region, name, status, pkg_url, license_key
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        ''', (platform, title_id, region, name, 'pending', pkg_url, license_key))
+        conn.commit()
+        print(f"{name} [{title_id}] added to queue.")
+        return True
+    except Exception as e:
+        print(f"Failure: Failed to queue {name} - {e}")
+        return False
+    finally:
+        conn.close()
 
 def update_queue_status(title_id, status):
     conn = get_db_connection()
