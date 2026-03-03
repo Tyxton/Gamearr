@@ -3,6 +3,7 @@ from fastapi import FastAPI, HTTPException, Query, Body
 from fastapi import BackgroundTasks
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel
 from typing import List, Optional
 
 from backend import parser, database, metadata, scout
@@ -65,17 +66,25 @@ def get_game_details(title_id: str, name: str):
             "title_id": title_id
     }
 
+class GamePayload(BaseModel):
+    platform: str
+    title_id: str
+    region: str
+    name: str
+    pkg_url: str
+    license_key: str | None = None
+
 @app.post("/api/queue")
-def add_to_queue(game: dict = Body(...)):
-    '''Receive the 'Add to Queue' command from the Frontend.'''
-    conn = database.get_db_connection()
-    conn.execute(
-        "INSERT INTO queue (title, title_id, status) VALUES (?, ?, ?)",
-        (game['name'], game['title_id'], 'pending')
+async def queue_endpoint(game: GamePayload):
+    success = database.add_to_queue(
+            game.platform,
+            game.title_id,
+            game.region,
+            game.name,
+            game.pkg_url,
+            game.license_key
     )
-    conn.commit()
-    conn.close()
-    return {"message": "Added to Queue", "title": game['name']}
+    return {"message": "Success"} if success else {"error": "Failed"}
 
 @app.get("/api/queue")
 def view_queue():
