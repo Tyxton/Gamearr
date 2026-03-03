@@ -47,7 +47,12 @@ def sync_database():
                     df['license_key'] = "MISSING"
 
                 # Reorder and reliter to ONLY the 6 columns in the database scheme
+                # clean the data, drop rows without a title_id or name
                 db_ready_df = df[['title_id', 'platform', 'region', 'name', 'pkg_url', 'license_key']].copy()
+                db_ready_df = db_ready_df.dropna(subset=['title_id', 'name'])
+
+                # drop duplicates
+                db_ready_df = db_ready_df.drop_duplicates(subset=['title_id'], keep='first')
 
                 # BATCH INSERT:
                 # Instead of 10,000 individual calls, use pandas a batch insert
@@ -58,7 +63,10 @@ def sync_database():
 
                     # Use 'append' because the rows have been cleared
                     db_ready_df.to_sql('games', conn, if_exists='append', index=False)
-                    conn.close()
+                    conn.commit() # NOT conn.close() THIS WOULD'VE WORKED VERSIONS AGO HAD I CAUGHT THIS.
+                except Exception as e:
+                    # Don't save anything on failure, rollback implicit
+                    print(f"[!] Error: Database insertion failed for {platform}: {e}")
                 finally:
                     conn.close()
 
