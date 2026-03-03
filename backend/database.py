@@ -136,7 +136,7 @@ def search_game_db(query):
     
     df = df.where(pd.notnull(df), None)
 
-    return df
+    return df.to_dict(orient='records')
 
 def add_to_queue(platform, title_id, region, name, pkg_url, license_key):
     conn = get_db_connection()
