@@ -3,6 +3,7 @@ from fastapi import FastAPI, HTTPException, Query, Body
 from fastapi import BackgroundTasks
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
+from contextlib import asynccontextmanager
 from pydantic import BaseModel
 from typing import List, Optional
 import shutil
@@ -13,11 +14,9 @@ from backend.downloader import get_safe_name
 # Standardized Path
 LIBRARY_DIR = os.getenv("LIBRARY_DIR", "/library")
 
-app = FastAPI(title="Gamearr API", version="0.4.3")
-
 # --- INITIALIZATION ---
-@app.on_event("startup")
-def startup_event():
+@asynccontextmanager
+async def lifespan(app: FastAPI)
     '''Initialize system on container boot.'''
     print("Syncing Database...")
     database.init_db()
@@ -25,6 +24,10 @@ def startup_event():
 
     import threading
     threading.Thread(target=scout.run_meta_scout, daemon=True).start()
+
+    yield
+
+app = FastAPI(title="Gamearr API", version="0.4.8", lifespan=lifespan)
 
 # --- API ENDPOINTS ---
 
@@ -121,4 +124,6 @@ app.mount("/", StaticFiles(directory="frontend", html=True), name="frontend")
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+
+    port = int(os.getenv("PORT", 8000))
+    uvicorn.run(app, host="0.0.0.0", port=port)

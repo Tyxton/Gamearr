@@ -7,11 +7,17 @@ INCOMPLETE_DIR = os.getenv("INCOMPLETE_DIR", "/downloads")
 LIBRARY_DIR = os.getenv("LIBRARY_DIR", "/library")
 
 def start_worker():
-    print("Monitoring Queue...")
+    print("Worker standby... waiting for Database initialization.")
 
     while True:
+        try:
         # check for next pending game
         get_next = database.get_next_queued_task()
+        break
+    except Exception:
+        time.sleep(2)
+
+        print("Database ready. Monitoring queue...")
 
         if not get_next:
             # if nothing in queue, rest for 30 seconds
