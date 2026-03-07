@@ -26,7 +26,7 @@ The easiest way to run Gamearr is via Docker Compose.
 ```yaml
 services:
   gamearr:
-    image: ghcr.io/yourusername/gamearr:latest # Or build: . if testing locally
+    build: .
     container_name: gamearr
     environment:
       - PUID=1000
