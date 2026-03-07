@@ -2,15 +2,26 @@
 PUID=${PUID:-1000}
 PGID=${PGID:-1000}
 
-echo "Adjusting permissions for user $PUID..."
+echo "--- Initializing Gamearr Permissions ---"
+echo "User ID: $PUID"
+echo "Group ID: $PGID"
 
-if ! id -u gamearr > /dev/null 2>&1; then
-    groupadd -g $PGID gamearr
-    useradd -u $PUID -g gamearr -m gamearr
+# create group if it doesn't exist
+if ! getent group gamearr >/dev/null; then
+    groupadd -g "$PGID" gamearr
 fi
 
-chown -R $PUID:$PGID /app/data /library
+# create user if not exists
+if ! getent passwd gamearr >/dev/null; then
+    useradd -u "$PUID" -g "$PGID" -m -s /bin/bash gamearr
+fi
 
-(sleep 5 && gosu gamearr python3 -m backend.worker) &
-echo "Launching application..."
+mkdir -p /app/data /library /downloads
+chown -R gamearr:gamearr /app/data /library /downloads
+
+# set umask so new files created are readable by host
+# 002 allkows group write
+umask 002
+
+echo "--- Starting Gamearr Service ---"
 exec gosu gamearr python3 main.py

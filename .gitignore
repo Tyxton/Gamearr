@@ -1,7 +1,10 @@
+.stfolder/
 .venv/
 __pycache__/
-*.tsv
-.env
 gamearr.db
+.env
+config/
 downloads/
-.stfolder/
+library/
+*.log
+

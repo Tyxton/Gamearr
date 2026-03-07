@@ -1,30 +1,32 @@
 import time
 import os
 import shutil
+from typing import final
 from backend import database, downloader, extractor
+from backend.models import GameStatus
+from backend.logger import logger
 
-INCOMPLETE_DIR = os.getenv("INCOMPLETE_DIR", "/downloads")
-LIBRARY_DIR = os.getenv("LIBRARY_DIR", "/library")
+# Force absolute path if not already to avoid permission failures
+raw_incomplete = os.getenv("INCOMPLETE_DIR", "/downloads")
+if not raw_incomplete.startswith("/"):
+    raw_incomplete = f"/{raw_incomplete}"
+INCOMPLETE_DIR = os.path.abspath(raw_incomplete)
+
+raw_library = os.getenv("LIBRARY_DIR", "/library")
+if not raw_library.startswith("/"):
+    raw_library = f"/{raw_library}"
+LIBRARY_DIR = os.path.abspath(raw_library)
+
 
 def start_worker():
-    print("Worker standby... waiting for Database initialization.")
+    logger.info("Worker standby... waiting for Database initialization.")
 
     while True:
         try:
             # check for next pending game
             get_next = database.get_next_queued_task()
-            break
-        except Exception:
-            time.sleep(2)
-            print("Database Ready. Monitoring queue...")
-
-    while True:
-        try:
-            get_next = database.get_next_queued_task()
-
             if not get_next:
-                time.sleep(30)
-                continue
+                return  # nothing to do, return to the async wrapper's sleep
 
             title_id = get_next['title_id']
             name = get_next['name']
@@ -32,51 +34,67 @@ def start_worker():
             pkg_url = get_next['pkg_url']
             license_key = get_next['license_key']
 
-            print(f"\nFound in queue: {name} ({platform.upper()})")
+            logger.info(f"\nFound in queue: {name} ({platform.upper()})")
 
             # update status
-            database.update_queue_status(title_id, 'downloading')
+            database.update_queue_status(title_id, GameStatus.DOWNLOADING)
 
             success = downloader.download_pkg(pkg_url, title_id, name)
 
             if success:
-                print(f"Download complete. Starting extraction for {title_id}...")
+                logger.info(
+                    f"Download complete. Starting extraction for {title_id}...")
+                database.update_queue_status(title_id, GameStatus.EXTRACTING)
 
                 # contruct path
                 from backend.downloader import get_safe_name
-                safe_folder = get_safe_name(name)
+                # add the title_id so that the folder is globally unique
+                safe_folder = get_safe_name(name, title_id)
 
-                pkg_file = os.path.join(INCOMPLETE_DIR, safe_folder, f"{title_id}.pkg")
+                pkg_file = os.path.join(
+                    INCOMPLETE_DIR, safe_folder, f"{title_id}.pkg")
 
                 # now extract
                 if extractor.extract_pkg(pkg_file, license_key, platform):
-                    print(f"Extraction Complete. Moving to Library: {name}")
-                    
-                    extracted_source = os.path.join(INCOMPLETE_DIR, safe_folder)
-                    destination_path = os.path.join(LIBRARY_DIR, safe_folder)
-                    
-                    try:
-                        # Move entire folder to the persistent library mount
-                        if os.path.exists(destination_path):
-                            shutil.rmtree(destination_path) # overwrite if it exists
+                    logger.info(
+                        f"Extraction Complete. Moving to Library: {name}")
 
-                        shutil.move(extracted_source, destination_path)
-                        print(f"Successfully extracted {name} to {destination_path}")
-                        database.update_queue_status(title_id, 'completed')
-                    except Exception as move_error:
-                        print(f"Transfer Failed: {move_error}")
-                        database.update_queue_status(title_id, 'failed_move')
+                    # Importing Logic
+                    database.update_queue_status(
+                        title_id, GameStatus.IMPORTING)
+                    source_folder = os.path.join(INCOMPLETE_DIR, safe_folder)
+                    final_destination = os.path.join(LIBRARY_DIR, safe_folder)
+                    try:
+                        if os.path.exists(final_destination):
+                            shutil.rmtree(final_destination)
+
+                        # Atomic Moves: 1. Try Rename, 2. Fall back to copytree+rmtree
+                        try:
+                            os.rename(source_folder, final_destination)
+                        except OSError:
+                            logger.info(
+                                f"Cross-device move detected for {name}. Copying...")
+                            shutil.copytree(source_folder, final_destination)
+                            shutil.rmtree(source_folder)
+
+                        database.update_queue_status(
+                            title_id, GameStatus.COMPLETED)
+                        # Trigger Scout for just this ID
+                        from backend.scout import scout_title
+                        scout_title(title_id, name)
+                    except Exception as e:
+                        logger.error(f"Import Failed: {e}")
+                        database.update_queue_status(
+                            title_id, GameStatus.FAILED)
                 else:
-                    print(f"Extraction failed for {name}")
-                    database.update_queue_status(title_id, 'failed_extraction')
+                    logger.error(f"Extraction failed for {name}")
+                    database.update_queue_status(title_id, GameStatus.FAILED)
             else:
-                database.update_queue_status(title_id, 'failed_download')
+                database.update_queue_status(title_id, GameStatus.FAILED)
 
         except Exception as e:
-            print(f"Error during {name}: {e}")
-            database.update_queue_status(title_id, 'error')
-            time.sleep(10)
+            logger.error(f"Worker Error during {name}: {e}")
+
 
 if __name__ == "__main__":
     start_worker()
-
