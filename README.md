@@ -118,7 +118,7 @@ Gamearr is currently in **Active Alpha (v0.4.x)**. Our goal is to reach parity w
 
 | Version  | Focus                | Key Objectives                                                                                                    |
 | :------- | :------------------- | :---------------------------------------------------------------------------------------------------------------- |
-| **v0.5** | **Connectivity**     | **NAS Integration:** Direct support for FTP, SMB, and NFS mounting for "Seedbox-to-Home" workflows.               |
+| **v0.5** | **Connectivity**     | **NAS Integration:** Direct support for FTP, SMB, and NFS mounting for "Seedbox-to-Home" workflows. ARM Support!               |
 | **v0.6** | **Expansion**        | **Platform Parity:** Adding support for full platform metadata and discovery.                                     |
 | **v0.7** | **Advanced Sources** | **\*Nab:** Integration with **Torznab** (Torrents) and **Newznab** (Usenet) for a truly automated PVR experience. |
 | **v0.8** | **Intelligence**     | **Import Lists:** Auto-sync your library based on Steam Wishlists, IGDB Collections, or Metacritic top-charts.    |
