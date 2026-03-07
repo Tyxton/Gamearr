@@ -1,14 +1,21 @@
 services:
   gamearr:
-    build: .
+    image: gamearr:latest
     container_name: gamearr
-    restart: unless-stopped
+    build: .
+    environment:
+      - PUID=1000 # change to your host user UID
+      - PGID=1000 # change to your host user GID
+      - TZ=America/Chicago
+      - IGDB_CLIENT_ID=your_id_here
+      - IGDB_CLIENT_SECRET=your_secret_here
+      - GAME_SOURCE_VITA=your_tsv_link
+      - GAME_SOURCE_PSP=your_tsv_link
+      - GAME_SOURCE_PSX=your_tsv_link
     ports:
-      - "8000:8000"
+      - 8000:8000
     volumes:
-      - ./data:/app/data # SQLite DB Location
-      - /your/tmp/staging/directory:/downloads # I recommend using /opt/gamearr/staging:
-      - /your/game/library:/library
-    env_file:
-      - .env
-
+      - ./config:/app/data            # database, keys, and logs
+      - /path/to/downloads:/downloads # temp download folder
+      - /path/to/games:/library       # your actual game library
+    restart: unless-stopped

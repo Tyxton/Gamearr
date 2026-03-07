@@ -1,37 +1,52 @@
 :root {
-    --primary-accent: #2ecc71;  /* Vibrant Emerald */
-    --dark-accent: #27ae60;     /* Deep Emerald For Hovers */
-    --linkHover: #38D46C;       /* Malachite Link Hovers */
-    --bg-main: #202020;         /* Standard *Arr Slate */
-    --bg-side:#2a2a2a;          /* Deep Sidebar */
-    --bg-header: #2a2a2a;       /* Deep Header */ 
-    --bg-card: #252529;         /* Card Background */
-    --bg-toolbar: #262626;      /* Toolbar Background */
-    --border: #2d2d30;
-    --text-main: #ccc;
-    --text-muted: #95a5a6;
-    --text-menus: #e1e2e3;
-    --scrollbar-color: #707070;
+  --primary-accent: #2ecc71; /* Vibrant Emerald */
+  --dark-accent: #27ae60; /* Deep Emerald For Hovers */
+  --linkHover: #38d46c; /* Malachite Link Hovers */
+  --bg-main: #202020; /* Standard *Arr Slate */
+  --bg-side: #2a2a2a; /* Deep Sidebar */
+  --bg-header: #2a2a2a; /* Deep Header */
+  --bg-card: #252529; /* Card Background */
+  --bg-toolbar: #262626; /* Toolbar Background */
+  --border: #2d2d30;
+  --text-main: #ccc;
+  --text-muted: #95a5a6;
+  --text-menus: #e1e2e3;
+  --scrollbar-color: #707070;
 
-    /* Added Functional Variables */
-    --sidebar-width: 240px;
-    --header-height: 60px;
-    --toolbar-height: 64px;
-    --status-monitored: #3498db; /* Blue for monitored status line */
-    --status-missing: #e74c3c;   /* Red for ribbon */
+  /* Added Functional Variables */
+  --sidebar-width: 240px;
+  --header-height: 60px;
+  --toolbar-height: 64px;
+  --status-monitored: #3498db; /* Blue for monitored status line */
+  --status-missing: #e74c3c; /* Red for ribbon */
 }
 
-* { margin: 0; padding: 0; box-sizing: border-box; }
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
 
 body {
-    font-family: 'Roboto', 'Open Sans', 'Helvetica Neue', 'Helvetica', 'Arial', sans-serif;
-    background-color: var(--bg-main);
-    color: var(--text-main);
-    overflow: hidden; /* Let inner containers handle scroll */
+  font-family:
+    "Roboto", "Open Sans", "Helvetica Neue", "Helvetica", "Arial", sans-serif;
+  background-color: var(--bg-main);
+  color: var(--text-main);
+  overflow: hidden; /* Let inner containers handle scroll */
 }
 
 /* Custom Scrollbar */
-::-webkit-scrollbar { width: 10px; height: 10px; }
-::-webkit-scrollbar-track { background: var(--bg-main); }
-::-webkit-scrollbar-thumb { background: var(--scrollbar-color); border-radius: 5px; }
-::-webkit-scrollbar-thumb:hover { background: var(--text-muted); }
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  background: var(--bg-main);
+}
+::-webkit-scrollbar-thumb {
+  background: var(--scrollbar-color);
+  border-radius: 5px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--text-muted);
+}
