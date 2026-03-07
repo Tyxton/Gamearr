@@ -26,7 +26,7 @@ The easiest way to run Gamearr is via Docker Compose.
 ```yaml
 services:
   gamearr:
-    build: .
+    image: ghcr.io/tyxton/gamearr:latest
     container_name: gamearr
     environment:
       - PUID=1000
@@ -34,9 +34,9 @@ services:
       - TZ=America/New_York
       - IGDB_CLIENT_ID=YOUR_IGDB_ID_HERE
       - IGDB_CLIENT_SECRET=YOUR_IGDB_SECRET_HERE
-      - GAME_SOURCE_VITA=your_tsv_link
-      - GAME_SOURCE_PSP=your_tsv_link
-      - GAME_SOURCE_PSX=your_tsv_link
+      - GAME_SOURCE_VITA=https://...
+      - GAME_SOURCE_PSP=https://...
+      - GAME_SOURCE_PSX=https://...
     volumes:
       - ./config:/app/data # Database and Logs
       - /path/to/downloads:/downloads # Incomplete downloads
@@ -45,6 +45,11 @@ services:
       - 8000:8000
     restart: unless-stopped
 ```
+## Versions & Tags
+We follow semantic versioning. For stability, you can pin your deployment to a specific release instead of `latest`.
+
+* `ghcr.io/tyxton/gamearr:latest` - The most recent stable release.
+* `ghcr.io/tyxton/gamearr:v0.4.47` - The current v0.4 alpha build
 
 ---
 
