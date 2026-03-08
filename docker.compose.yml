@@ -1,0 +1,20 @@
+services:
+  gamearr:
+    image: ghcr.io/tyxton/gamearr:latest
+    container_name: gamearr
+    environment:
+      - PUID=1000 # change to your host user UID
+      - PGID=1000 # change to your host user GID
+      - TZ=America/Chicago
+      - IGDB_CLIENT_ID=your_id_here
+      - IGDB_CLIENT_SECRET=your_secret_here
+      - GAME_SOURCE_VITA=https://...
+      - GAME_SOURCE_PSP=https://...
+      - GAME_SOURCE_PSX=https://...
+    ports:
+      - 8000:8000
+    volumes:
+      - ./config:/app/data # database, keys, and logs
+      - /path/to/downloads:/downloads # temp download folder
+      - /path/to/games:/library # your actual game library
+    restart: unless-stopped
