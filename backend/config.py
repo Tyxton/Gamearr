@@ -18,7 +18,7 @@ class Settings(BaseSettings):
 
     igdb_client_id: str | None = Field(
         default=None, validation_alias="IGDB_CLIENT_ID")
-    igdb_cleint_secret: str | None = Field(
+    igdb_client_secret: str | None = Field(
         default=None, validation_alias="IGDB_CLIENT_SECRET")
 
     source_vita: str | None = Field(

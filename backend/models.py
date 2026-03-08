@@ -1,9 +1,6 @@
 from pydantic import BaseModel, Field
-from typing import Optional, List
 from datetime import datetime
 from enum import Enum
-
-# Standardize the structure for a game entry in the library or search
 
 
 class GameModel(BaseModel):
@@ -40,15 +37,15 @@ class QueueItem(QueuePayload):
 
 
 class GameStatus(str, Enum):
-    # Discover States
     AVAILABLE = "available"      # Not in DB, found via search
-
-    # Queue/Worker States
     PENDING = "pending"          # In queue, waiting for worker
     DOWNLOADING = "downloading"  # aria2c is active
     EXTRACTING = "extracting"    # pkg2zip is active
     IMPORTING = "importing"      # Moving files to /library
-
-    # Final States
     COMPLETED = "completed"      # Succcessfully installed
     FAILED = "failed"            # General Failure
+
+
+class BulkActionPayload(BaseModel):
+    title_ids: list[str]
+    action: str
