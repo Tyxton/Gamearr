@@ -1,19 +1,14 @@
 # COPYRIGHT (C) 2026 nottyxton and The Gamearr Authors
 
 import asyncio
-import shutil
-import sqlite3
 import pandas as pd
 import numpy as np
-from pathlib import Path
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, HTTPException, Body, BackgroundTasks, Depends, APIRouter, status
-from fastapi.responses import JSONResponse
+from fastapi import FastAPI, HTTPException, Body, BackgroundTasks, Depends, APIRouter
 from fastapi.staticfiles import StaticFiles
 
 from backend import parser, database, metadata, scout
-from backend.exceptions import LogsError
 from backend.models import GameModel, QueuePayload, BulkActionPayload
 from backend.auth import validate_api_key
 from backend.logger import logger, LOG_FILE
@@ -87,7 +82,7 @@ async def get_logs(lines: int = 100):
             with LOG_FILE.open("r") as f:
                 content = f.readlines()
                 return {"logs": "".join(content[-lines:])}
-        except Exception as e:
+        except (OSError, PermissionError) as e:
             logger.error(f"Failed to read logs: {e}")
             raise HTTPException(
                 status_code=500, detail="Could not read log file.")
@@ -141,7 +136,12 @@ async def get_library():
 
 @api_router.get("/search")
 async def search_games(q: str):
-    results = await asyncio.to_thread(database.search_game_db, q)
+    #! ARCHITECTURE: Unified scope closure wrapping for to_thread isolates
+    # arguements preventing destructuring collisions inside run_in_executor.
+    def _search():
+        return database.search_game_db(q)
+
+    results = await asyncio.to_thread(_search)
 
     if not results:
         return {"result": []}
@@ -150,8 +150,9 @@ async def search_games(q: str):
     tasks = []
     for game in top_results:
         if not game.get('cover_url') or "placeholder.png" in game.get('cover_url'):
-            tasks.append(asyncio.to_thread(
-                metadata.get_game_metadata, game['title_id'], game['name']))
+            def _fetch_meta(tid=game['title_id'], gname=game['name']):
+                return metadata.get_game_metadata(tid, gname)
+            tasks.append(asyncio.to_thread(_fetch_meta))
         else:
             tasks.append(asyncio.sleep(0))
 
@@ -195,14 +196,19 @@ async def get_game_details(title_id: str, name: str):
 
 @api_router.post("/queue")
 async def queue_endpoint(game: QueuePayload):
-    success = await asyncio.to_thread(
-        game.platform,
-        game.title_id,
-        game.region,
-        game.name,
-        game.pkg_url,
-        game.license_key
-    )
+    #! ARCHITECTURE: Closure wrapper forces avaluation of Pydantic string properties inside the executor,
+    # completely circumventing TypeError injection bugs inside `asyncio.to_thread` parsing
+    def _add():
+        return database.add_to_queue(
+            game.platform,
+            game.title_id,
+            game.region,
+            game.name,
+            game.pkg_url,
+            game.license_key
+        )
+
+    success = await asyncio.to_thread(_add)
     return {"message": "Success"} if success else {"error": "Failed"}
 
 
@@ -331,14 +337,10 @@ async def trigger_update_all(background_tasks: BackgroundTasks):
 @api_router.get("/system/health")
 async def get_system_health():
     def _health():
-        total, used, free = shutil.disk_usage(str(settings.library_dir))
+        #! ARCHITECTURE: Delegated telemetry fetching entirely to StorageManager mapping
+        # protecting endpoint from uptrapped OS layer groupouts.
         return {
-            "disk": {
-                "total_gb": total // (2**30),
-                "free_gb": free // (2**30),
-                "used_gb": used // (2**30),
-                "percent": round((used / total) * 100, 1)
-            },
+            "disk": StorageManager.get_disk_telem(settings.library_dir)
         }
     return await asyncio.to_thread(_health)
 

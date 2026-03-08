@@ -5,7 +5,7 @@ from pathlib import Path
 from backend import database, metadata
 from backend.models import GameStatus
 from backend.logger import logger
-from backend.settings import settings
+from backend.config import settings
 
 
 def run_meta_scout(single_id=None):

@@ -26,7 +26,7 @@ class StorageManager:
             raise StorageError(f"Cannot create directory {path}: {e}")
 
     @staticmethod
-    def check_write_acc3ess(path: Path) -> bool:
+    def check_write_access(path: Path) -> bool:
         test_file = path / '.gamearr_test'
         try:
             StorageManager.ensure_dir(path)
@@ -38,14 +38,23 @@ class StorageManager:
             return False
 
     @staticmethod
-    def get_free_space(path: str) -> float:
+    def get_disk_telem(path: Path) -> dict[str, float | int]:
+        '''
+        ARCHITECTURE: Encapsulates shutil.disk_usage to ensure umounted/stale NAS paths
+        do not trigger an uncaught OSError during API health polls.
+        '''
         try:
-            _, _, free = shutil.disk_usage(str(path))
-            return free / (1024**3)
+            total, used, free = shutil.disk_usage(str(path))
+            return {
+                "total_gb": total // (2**30),
+                "used_gb": used // (2**30),
+                "free_gb": free // (2**30),
+                "percent": round((used / total) * 100, 1) if total > 0 else 0.0
+            }
         except (OSError, PermissionError) as e:
             logger.warning(
-                f"STORAGE WARNING: Could not determine free space for {path}: {e}")
-            return 0.0
+                f"STORAGE WARNING: Telemetry drop for capacity on {path}: {e}")
+            return {"total_gb": 0, "used_gb": 0, "free_gb": 0, "percent": 0.0}
 
     @staticmethod
     def atomic_move(src: Path, dst: Path) -> None:

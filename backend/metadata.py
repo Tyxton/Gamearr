@@ -32,7 +32,8 @@ def get_valid_token():
             database.set_config("igdb_token", token)
             database.set_config("igdb_expiry", str(new_expiry))
             return token
-        except Exception as e:
+        except requests.RequestException as e:
+            #! ARCHITECTURE: Explicit request.RequestException traps network and OAuth timeouts
             logger.error(f"CRITIAL ERROR: Could not refresh IGDB token: {e}")
             return None
     return token
@@ -96,7 +97,7 @@ def get_game_metadata(title_id, game_name):
                     return {"name": best_match.get("name"), "summary": summary, "cover_url": hd_cover}
 
             logger.info(f"IGDB: No suitable match found for '{clean_name}'")
-    except Exception as e:
+    except requests.RequestException as e:
         logger.error(f"IGDB Comms Failure: {e}")
 
     return {"cover_url": "/assets/placeholder.png", "summary": "Metadata not found."}

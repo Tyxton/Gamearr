@@ -67,7 +67,9 @@ def download_pkg(url, title_id, name):
             logger.error(f"CRITICAL ERROR: aria2c exited with status {
                          process.returncode}")
             return False
-    except Exception as e:
+    except (OSError, subprocess.SubprocessError) as e:
+        #! ARCHITECTURE: isolated to OS and subprocess layers to trap pipe collapses
+        # and execution faults cleanly without swalling standard python runtime errors.
         logger.error(f"DOWNLOADER ERROR: Transfer failed for {name}: {e}")
 
 

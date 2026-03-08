@@ -60,7 +60,7 @@ def start_worker():
                         database.update_queue_status(
                             title_id, GameStatus.COMPLETED)
                         scout_title(title_id, name)
-                    except Exception as e:
+                    except StorageError as e:
                         logger.error(f"Import Failed: {e}")
                         database.update_queue_status(
                             title_id, GameStatus.FAILED)
@@ -70,6 +70,9 @@ def start_worker():
             else:
                 database.update_queue_status(title_id, GameStatus.FAILED)
         except Exception as e:
+            #! ARCHITECTURE: The worker is a daemonized background loop.
+            # it must trap broad exceptions at the highest level to survive unforseen drops
+            # (e.g. SQLite lock timeouts) without exiting the thread permanently
             logger.error(f"Worker Error: {e}")
 
 
