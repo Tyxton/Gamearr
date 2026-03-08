@@ -7,14 +7,15 @@ api_key_header = APIKeyHeader(name=API_KEY_NAME, auto_error=False)
 
 
 async def validate_api_key(api_key: str = Security(api_key_header)):
-    ''' Validates the X-Api-Key header against the database '''
+    ''' 
+    ARCHITECTURE: key validation seperated from static env variables.
+    Reads dynamically generated hex from persistent SQLite config cache to support session injection.
+    '''
     db_key = database.get_config("api_key")
 
-    # allow if key matches
     if api_key == db_key:
         return api_key
 
-    # if no key or wrong key
     raise HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Invalid or missing API Key"
