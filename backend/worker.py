@@ -1,5 +1,5 @@
-import time
 from pathlib import Path
+import threading
 
 from backend import database, downloader, extractor
 from backend.models import GameStatus
@@ -7,6 +7,9 @@ from backend.logger import logger
 from backend.config import settings
 from backend.storage import StorageManager
 from backend.scout import scout_title
+from backend.exceptions import StorageError
+
+shutdown_event = threading.Event()
 
 
 def start_worker():
@@ -14,7 +17,7 @@ def start_worker():
     # it consumes the SQLite queue sequentially to prevent file lock contention.
     logger.info("Worker standby... waiting for Database initialization.")
 
-    while True:
+    while not shutdown_event.is_set():
         try:
             get_next = database.get_next_queued_task()
             if not get_next:
@@ -67,8 +70,12 @@ def start_worker():
                 else:
                     logger.error(f"Extraction Failed: {name}")
                     database.update_queue_status(title_id, GameStatus.FAILED)
-            else:
-                database.update_queue_status(title_id, GameStatus.FAILED)
+                if shutdown_event.is_set():
+                    #! ARCHITECTURE: preserves queue integrity upon graceful container halt
+                    # instead of hanging the shutdown process until the download or import is finished
+                    database.update_queue_status(title_id, GameStatus.PENDING)
+                else:
+                    database.update_queue_status(title_id, GameStatus.FAILED)
         except Exception as e:
             #! ARCHITECTURE: The worker is a daemonized background loop.
             # it must trap broad exceptions at the highest level to survive unforseen drops

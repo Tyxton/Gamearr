@@ -7,6 +7,7 @@ from backend.logger import logger
 from backend.config import settings
 from backend.storage import StorageManager
 from backend import database
+from backend.worker import shutdown_event
 
 PROGRESS_RE = re.compile(r'\((\d+)%\)')
 
@@ -15,8 +16,12 @@ def download_pkg(url, title_id, name):
     safe_name = get_safe_name(name, title_id)
 
     #! DESTRUCTIVE: os.makedirs removed,
-    #! ARCHITECTURE: StorageManager ensures the mount is writable **before** calling aria2c
     download_dir: Path = settings.incomplete_dir / safe_name
+
+    #! ARCHITECTURE: Purge ghost data from previous failed/crashed attempts.
+    StorageManager.purge_dir(download_dir)
+
+    #! ARCHITECTURE: StorageManager ensures the mount is writable **before** calling aria2c
     StorageManager.ensure_dir(download_dir)
 
     command = [
@@ -47,6 +52,13 @@ def download_pkg(url, title_id, name):
         current_percent = 0
 
         for line in process.stdout:
+            if shutdown_event.is_set():
+                #! Abors native subprocess gracefully preventing Uvicorn hang
+                process.terminate()
+                logger.warning(f"DOWNLOADER WARNING: Terminating aria2c process for {
+                               name} due to system shutdown.")
+                return False
+
             match = PROGRESS_RE.search(line)
             if match:
                 new_percent = int(match.group(1))
