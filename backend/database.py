@@ -238,6 +238,24 @@ def get_next_queued_task():
     return res
 
 
+def revert_stuck_queue():
+    #! ARCHITECTURE: Ensures pending downloads interrupted by host crash resume gracefully
+    # SIGINT, SIGKILL, Power Outage, etc.
+    conn = get_db_connection()
+    try:
+        conn.execute('''
+            UPDATE queue
+            SET status = 'pending'
+            WHERE status IN ('downloading', 'extracting', 'importing')
+        ''')
+        conn.commit()
+        logger.info("Database: Reverted stale queue items to 'pending'.")
+    except sqlite3.Error as e:
+        logger.error(f"STORAGE ERROR: Failed to recover queue state - {e}")
+    finally:
+        conn.close()
+
+
 def get_or_generate_api_key():
     key = get_config("api_key")
     if not key:

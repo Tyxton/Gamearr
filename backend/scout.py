@@ -78,8 +78,31 @@ def scout_title(title_id, name):
 
 def run_library_sync():
     import sqlite3
+    from backend.downloader import get_safe_name
+    from backend.storage import StorageManager
+
     conn = database.get_db_connection()
     conn.row_factory = sqlite3.Row
+
+    #! ARCHITECTURE: Disk reality enforcement. Cleans up DB orphans if user manually deleted folder from disk
+    completed = conn.execute(
+        "SELECT title_id, name FROM queue WHERE status = 'completed'").fetchall()
+    missing_from_disk = []
+    for row in completed:
+        tid = row['title_id']
+        name = row['name']
+        safe_folder = get_safe_name(name, tid)
+        expected_path = settings.library_dir / safe_folder
+
+        if not StorageManager.path_exists(expected_path):
+            missing_from_disk.append((tid,))
+            logger.info(
+                f"Scout: {name} missing from disk. Marking for database removal.")
+
+    if missing_from_disk:
+        conn.executemany(
+            "DELETE FROM queue WHERE title_id = ?", missing_from_disk)
+        conn.commit()
 
     sql = '''
         SELECT g.title_id, g.name FROM games g

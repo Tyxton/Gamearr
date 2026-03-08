@@ -26,6 +26,9 @@ async def lifespan(app: FastAPI):
         logger.error("CRITICAL: Database initialization failed.")
         return
 
+    #! ARCHITECTURE: Self-healing queue recovery for non-graceful container exits (SIGKILL/Power Loss).
+    await asyncio.to_thread(database.revert_stuck_queue)
+
     def _provision_directories():
         StorageManager.ensure_dir(settings.library_dir)
         StorageManager.ensure_dir(settings.incomplete_dir)
@@ -43,6 +46,8 @@ async def lifespan(app: FastAPI):
     yield
 
     logger.info("Shutting down background tasks...")
+    from backend.worker import shutdown_event
+    shutdown_event.set()
     worker_task.cancel()
     scout_task.cancel()
 
