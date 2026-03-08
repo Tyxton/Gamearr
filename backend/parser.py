@@ -1,10 +1,11 @@
-import os
+import sqlite3
 import pandas as pd
 import requests
 import numpy as np
 from io import StringIO
 from backend import database
 from backend.logger import logger
+from backend.config import settings
 
 
 def sync_database():
@@ -102,7 +103,7 @@ def sync_database():
                     conn.commit()
                     logger.info(
                         "Database sync: UPSERT complete. No downtime occurred.")
-                except Exception as e:
+                except sqlite3.Error as e:
                     logger.error(f"PARSING ERROR: Database insertion failed for {
                                  platform}: {e}")
                 finally:
@@ -117,5 +118,5 @@ def sync_database():
                 logger.info(
                     f"{platform.upper()} manifest is unchanged. Skipping.")
 
-        except Exception as e:
+        except requests.RequestException as e:
             logger.error(f"Failure during {platform} sync: {e}")

@@ -16,6 +16,12 @@ class Settings(BaseSettings):
     db_path: Path = Field(default=Path("/app/data/gamearr/db"),
                           validation_alias="DB_PATH")
 
+    #! DEBT: To fix the log error. Dynamic path traversal from db_path (e.g. parent.parent)
+    # risks escaping the container's writable volume resulting in UID/GID permission
+    # rejects against root paths like /app.
+    log_dir: Path = Field(default=Path("/app/data/logs"),
+                          validation_alias="LOG_DIR")
+
     igdb_client_id: str | None = Field(
         default=None, validation_alias="IGDB_CLIENT_ID")
     igdb_client_secret: str | None = Field(

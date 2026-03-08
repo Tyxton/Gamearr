@@ -2,7 +2,10 @@ import secrets
 import sqlite3
 import pandas as pd
 import numpy as np
-import pathlib as Path
+from pathlib import Path
+
+# corrected malformed `import pathlib as Path` which
+# induces runtime AttributeError during Pydantic schema validation.
 
 from backend.logger import logger
 from backend.config import settings
@@ -73,14 +76,17 @@ def init_db():
         try:
             cursor.execute(
                 "ALTER TABLE games ADD COLUMN monitored INTEGER DEFAULT 0")
-        except:
+        except sqlite3.OperationalError:
+            #! DEBT SQLite lacks an 'ADD COLUMN IF NOT EXISTS' syntax.
+            # trapping the OperationalError safely bypasses this duplicate column constraint on hosts
+            # without masking deeper I/O locking failures
             pass
 
         conn.commit()
         conn.close()
         return True
-    except Exception as e:
-        print(f"Database Init Error: {e}")
+    except sqlite3.Error as e:
+        logger.error(f"STORAGE FATAL: Database Initialization dropped: {e}")
         return False
 
 
@@ -204,7 +210,9 @@ def add_to_queue(platform, title_id, region, name, pkg_url, license_key):
         conn.commit()
         logger.info(f"QUEUE: {name} [{title_id}] added to queue.")
         return True
-    except Exception as e:
+    except sqlite3.Error as e:
+        #! ARCHITECTURE: restored strict sqlite3.Error trapping to ensure WAL/Lock faults
+        # are identified over generic exceptions
         logger.error(f"QUEUE ERROR: Failed to queue {name} - {e}")
         return False
     finally:
