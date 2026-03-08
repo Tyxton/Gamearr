@@ -8,15 +8,16 @@ class GamearrError(Exception):
 
 
 class StorageError(GamearrError):
-    ''' when disk io fails '''
     pass
 
 
 class MetadataError(GamearrError):
-    ''' failure in IGDB or 3rd party API '''
     pass
 
 
 class ExtractionError(GamearrError):
-    ''' pkg2zip decryption error '''
+    pass
+
+
+class LogsError(GamearrError):
     pass
