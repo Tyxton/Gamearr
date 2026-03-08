@@ -1,24 +1,21 @@
 import secrets
-import os
 import sqlite3
 import pandas as pd
 import numpy as np
+import pathlib as Path
 
 from backend.logger import logger
-
-# Fallback to local if the ENV isn't set (like during local dev)
-DB_PATH = os.getenv("DB_PATH", "/app/data/gamearr.db")
-
-# --- Helper for thread-safe/process-safe connections ---
+from backend.config import settings
 
 
 def get_db_connection():
-    # timeout=20 tells the worker to wait if the UI is currently writing
-    conn = sqlite3.connect(DB_PATH, timeout=20)
-    # Enable WAL mode: allows simultaneous reading and writing
+    #! DESTRUCTIVE: Hardcoded OS paths stripped. Structural path validation via Pydantic model.
+    settings.db_path.parent.mkdir(parents=True, exist_ok=True)
+
+    conn = sqlite3.connect(str(settings.db_path), timeout=20)
+    #! ARCHITECTURE: WAL mode for improved concurrency and performance
     conn.execute("PRAGMA journal_mode=WAL;")
     conn.execute("PRAGMA synchronous=NORMAL;")
-    # Allows user to look up a game not found the local TSV, just in case
     conn.execute("PRAGMA foreign_keys = ON;")
     return conn
 
@@ -28,7 +25,6 @@ def init_db():
         conn = get_db_connection()
         cursor = conn.cursor()
 
-        # TSV Parser Config
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS config (
                 key TEXT PRIMARY KEY,
@@ -36,7 +32,6 @@ def init_db():
             )
         ''')
 
-        # Raw Sony Data
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS games (
                 title_id TEXT PRIMARY KEY COLLATE NOCASE,
@@ -48,7 +43,6 @@ def init_db():
             )
         ''')
 
-        # IGDB Metadata Cache
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS metadata (
                 title_id TEXT PRIMARY KEY COLLATE NOCASE,
@@ -59,7 +53,6 @@ def init_db():
             )
         ''')
 
-        # The Queue / Status Table
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS queue (
                 title_id TEXT PRIMARY KEY COLLATE NOCASE,
@@ -77,12 +70,11 @@ def init_db():
             )
         ''')
 
-        # add monitored column to games table if it doesn't exist
         try:
             cursor.execute(
                 "ALTER TABLE games ADD COLUMN monitored INTEGER DEFAULT 0")
         except:
-            pass  # already exists
+            pass
 
         conn.commit()
         conn.close()
