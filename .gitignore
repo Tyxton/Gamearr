@@ -7,4 +7,4 @@ config/
 downloads/
 library/
 *.log
-
+docker-compose.yml
