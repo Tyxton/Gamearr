@@ -261,6 +261,8 @@ def update_queue_error(title_id: str, error_msg: str):
     conn = get_db_connection()
     conn.execute("UPDATE queue SET error_msg = ? WHERE title_id = ?",
                  (error_msg, title_id))
+    conn.commit()
+    conn.close()
 
 
 def get_or_generate_api_key():
