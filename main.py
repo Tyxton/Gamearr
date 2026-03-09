@@ -40,6 +40,9 @@ async def lifespan(app: FastAPI):
     # Woker and Scout are delayed until the primary datasync finishes.
     async def _delayed_start():
         await asyncio.to_thread(parser.sync_database)
+        #! ARCHITECTURE: Immediate scout trigger post-sync to clear any ghost entries on boot
+        await asyncio.to_thread(scout.run_library_sync)
+
         logger.info("Background services initializing...")
         global worker_task, scout_task
         worker_task = asyncio.create_task(run_async_worker())
@@ -58,9 +61,11 @@ async def run_async_worker():
 
 
 async def run_async_scout():
-    from backend.scout import run_meta_scout
+    #! ARCHITECTURE: pointing the 5min loop to the library
+    # sync ensures periodic phyical data resolution.
+    from backend.scout import run_library_sync
     while True:
-        await asyncio.to_thread(run_meta_scout)
+        await asyncio.to_thread(run_library_sync)
         await asyncio.sleep(300)
 
 app = FastAPI(title="Gamearr API", version="0.4.38", lifespan=lifespan)
