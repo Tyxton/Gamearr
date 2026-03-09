@@ -8,6 +8,7 @@ from backend.config import settings
 from backend.storage import StorageManager
 from backend import database
 from backend.worker import shutdown_event
+from backend.models import GameStatus
 
 PROGRESS_RE = re.compile(r'\((\d+)%\)')
 
@@ -53,7 +54,9 @@ def download_pkg(url, title_id, name):
 
         for line in process.stdout:
             if shutdown_event.is_set():
-                #! Abors native subprocess gracefully preventing Uvicorn hang
+                #! ARCHITECTURE: Aborts native subprocess gracefully preventing Uvicorn hang
+                update_progress(title_id, current_percent, 0, 0)
+                database.update_queue_status(title_id, GameStatus.PENDING)
                 process.terminate()
                 logger.warning(f"DOWNLOADER WARNING: Terminating aria2c process for {
                                name} due to system shutdown.")

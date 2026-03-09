@@ -75,12 +75,6 @@ def start_worker():
                 else:
                     logger.error(f"Extraction Failed: {name}")
                     database.update_queue_status(title_id, GameStatus.FAILED)
-                if shutdown_event.is_set():
-                    #! ARCHITECTURE: preserves queue integrity upon graceful container halt
-                    # instead of hanging the shutdown process until the download or import is finished
-                    database.update_queue_status(title_id, GameStatus.PENDING)
-                else:
-                    database.update_queue_status(title_id, GameStatus.FAILED)
         except Exception as e:
             #! ARCHITECTURE: The worker is a daemonized background loop.
             # it must trap broad exceptions at the highest level to survive unforseen drops
