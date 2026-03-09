@@ -10,7 +10,6 @@ class GameModel(BaseModel):
     name: str
     pkg_url: str
     license_key: str | None = "MISSING"
-    # centralized naming
     cover_url: str | None = "/assets/placeholder.png"
     status: str | None = "available"
 
@@ -36,12 +35,23 @@ class QueueItem(QueuePayload):
     error_msg: str | None = None
 
 
+class MountState(str, Enum):
+    '''
+    ARCHITECTURE: Represents the physical health of a network mount, which can be used to halt/resume the workers
+    '''
+    ONLINE = "online"
+    DEGRADED = "degraded"
+    OFFLINE = "offline"
+
+
 class GameStatus(str, Enum):
     AVAILABLE = "available"      # Not in DB, found via search
     PENDING = "pending"          # In queue, waiting for worker
     DOWNLOADING = "downloading"  # aria2c is active
     EXTRACTING = "extracting"    # pkg2zip is active
+    VERIFYING = "verifying"      # checking the hash/size
     IMPORTING = "importing"      # Moving files to /library
+    STALLED = "stalled"          # I/O halt (forex NAS offline)
     COMPLETED = "completed"      # Succcessfully installed
     FAILED = "failed"            # General Failure
 

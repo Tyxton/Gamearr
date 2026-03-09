@@ -4,19 +4,13 @@ import pandas as pd
 import numpy as np
 from pathlib import Path
 
-# corrected malformed `import pathlib as Path` which
-# induces runtime AttributeError during Pydantic schema validation.
-
 from backend.logger import logger
 from backend.config import settings
 
 
 def get_db_connection():
-    #! DESTRUCTIVE: Hardcoded OS paths stripped. Structural path validation via Pydantic model.
     settings.db_path.parent.mkdir(parents=True, exist_ok=True)
-
     conn = sqlite3.connect(str(settings.db_path), timeout=20)
-    #! ARCHITECTURE: WAL mode for improved concurrency and performance
     conn.execute("PRAGMA journal_mode=WAL;")
     conn.execute("PRAGMA synchronous=NORMAL;")
     conn.execute("PRAGMA foreign_keys = ON;")
@@ -143,7 +137,6 @@ def get_cached_metadata(title_id):
 
 def get_all_games(limit=50):
     conn = get_db_connection()
-    # Pull library grid posters from metadata.
     sql = '''
         SELECT g.platform, g.title_id, g.region, g.name, g.pkg_url, m.cover_url
         FROM games g
@@ -153,14 +146,12 @@ def get_all_games(limit=50):
     df = pd.read_sql_query(sql, conn, params=(limit,))
     conn.close()
 
-    # sanitize, see search_game_db below
     df = df.astype(object).replace({np.nan: None})
     return df
 
 
 def search_game_db(query):
     conn = get_db_connection()
-    # split the query into individual words to allow multisearch (e.g. "psx us" -> ["psx", "us"])
     terms = query.split()
     if not terms:
         return []
@@ -171,7 +162,6 @@ def search_game_db(query):
         LEFT JOIN metadata m ON g.title_id = m.title_id
     '''
 
-    # each term must match one of our 4 columns (Name, ID, Region, or Platform)
     where_clauses = []
     params = []
 
@@ -179,15 +169,12 @@ def search_game_db(query):
         where_clauses.append(
             "(g.name LIKE ? OR g.title_id LIKE ? OR g.region LIKE ? OR g.platform LIKE ?)")
         search_pattern = f"%{term}%"
-        # add the pattern 4 times because there are 4 ? placeholders in the clause above
         params.extend([search_pattern, search_pattern,
                       search_pattern, search_pattern])
 
-    # join the clauses with AND (this ensures both "psx" and "us" are present
     full_sql = f"{sql} WHERE {' AND '.join(where_clauses)} LIMIT 100"
 
     try:
-        # Execute with our flattened params list
         df = pd.read_sql_query(full_sql, conn, params=params)
     finally:
         conn.close()
@@ -211,8 +198,6 @@ def add_to_queue(platform, title_id, region, name, pkg_url, license_key):
         logger.info(f"QUEUE: {name} [{title_id}] added to queue.")
         return True
     except sqlite3.Error as e:
-        #! ARCHITECTURE: restored strict sqlite3.Error trapping to ensure WAL/Lock faults
-        # are identified over generic exceptions
         logger.error(f"QUEUE ERROR: Failed to queue {name} - {e}")
         return False
     finally:
@@ -229,9 +214,8 @@ def update_queue_status(title_id, status):
 
 def get_next_queued_task():
     conn = get_db_connection()
-    conn.row_factory = sqlite3.Row  # Access columns by name
+    conn.row_factory = sqlite3.Row
     cursor = conn.cursor()
-    # find the oldest pending task
     res = cursor.execute(
         "SELECT * FROM queue WHERE status = 'pending' ORDER BY added_at ASC LIMIT 1").fetchone()
     conn.close()
@@ -239,14 +223,12 @@ def get_next_queued_task():
 
 
 def revert_stuck_queue():
-    #! ARCHITECTURE: Ensures pending downloads interrupted by host crash resume gracefully
-    # SIGINT, SIGKILL, Power Outage, etc.
     conn = get_db_connection()
     try:
         conn.execute('''
             UPDATE queue
             SET status = 'pending'
-            WHERE status IN ('downloading', 'extracting', 'importing')
+            WHERE status IN ('downloading', 'extracting', 'importing', 'verifying', 'stalled')
         ''')
         conn.commit()
         logger.info("Database: Reverted stale queue items to 'pending'.")
@@ -257,7 +239,6 @@ def revert_stuck_queue():
 
 
 def update_queue_error(title_id: str, error_msg: str):
-    #! ARCHITECTURE: Persistent error logging
     conn = get_db_connection()
     conn.execute("UPDATE queue SET error_msg = ? WHERE title_id = ?",
                  (error_msg, title_id))

@@ -4,11 +4,9 @@ from pathlib import Path
 
 
 class Settings(BaseSettings):
-    #! ARCHITECTURE: Pydantic will rase a ValidationError if .env paths are invalid.
     port: int = Field(default=8000, validation_alias="PORT")
     api_key: str | None = None
 
-    #! DESTRUCTIVE: all paths are strictly Path objects. No string concatenation allowed.
     library_dir: Path = Field(
         default=Path("/library"), validation_alias="LIBRARY_DIR")
     incomplete_dir: Path = Field(
@@ -33,6 +31,13 @@ class Settings(BaseSettings):
         default=None, validation_alias="GAME_SOURCE_PSP")
     source_psx: str | None = Field(
         default=None, validation_alias="GAME_SOURCE_PSX")
+
+    #! ARCHITECTURE: hardware aware i/o tuning timeouts, buffer, and user mapping
+    disk_timeout: int = Field(default=30, validation_alias="DISK_TIMEOUT")
+    io_buffer_size: int = Field(
+        default=1048576, validation_alias="IO_BUFFER_SIZE")
+    target_uid: int | None = Field(default=None, validation_alias="TARGET_UID")
+    target_gid: int | None = Field(default=None, validation_alias="TARGET_GID")
 
     class Config:
         env_file = ".env"
