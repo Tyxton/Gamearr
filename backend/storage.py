@@ -90,31 +90,34 @@ class StorageManager:
         ''' 
         DESTRUCTIVE: Removed os.rename
         TRADEOFF: Attempting native rename first for performance; falling back to byte-copy for saftey
+        ARCHITECTURE: Specifically ignores metadata errors during byte-copy to support limited NAS permission sets
         '''
         if not src.exists():
-            try:
-                if dst.is_dir():
-                    shutil.rmtree(str(dst))
-                else:
-                    dst.unlink()
-            except (OSError, PermissionError) as e:
-                raise StorageError(
-                    f"STORAGE ERROR: Destination conflict locked on {dst}: {e}")
+            raise StorageError(f"STORAGE ERROR: Source path vanished: {src}")
+
+        if dst.exists():
+            StorageManager.purge_dir(dst)
 
         try:
             src.rename(dst)
         except (OSError, PermissionError) as e:
             #! ARCHITECTURE: Catching cross-device link or stale NFS handles
             logger.warning(
-                f"STORAGE WARNING: Cross-device limit or stale lock on {src}. Initiating byte-copy. ({e})")
+                f"STORAGE WARNING: Rename failed ({e}). Starting byte-copy to ({dst}).")
             time.sleep(2)  # pray the NAS releases any lingering locks
             try:
                 if src.is_dir():
-                    shutil.copytree(str(src), str(dst))
-                    shutil.rmtree(str(src))
+                    #! ARCHITECTURE: copytree with dirs_exist_ok and symlinks=False
+                    # to maximize compatibility with network shares
+                    shutil.copytree(str(src), str(
+                        dst), dirs_exist_ok=True, copy_function=shutil.copy)
+                    StorageManager.purge_dir(src)
                 else:
-                    shutil.copy2(str(src), str(dst))
+                    #! ARCHITECTURE: dropping down to shutil.copy from copy2 to ignore metadata permission failures.
+                    # initially, transferring metadata was a priority, but this failed in my own homelab setup.
+                    shutil.copy(str(src), str(dst))
                     src.unlink()
-            except (OSError, PermissionError) as fallback_err:
+            except Exception as fallback_err:
+                #! DEBT: byte copies were falling with no error output as to why, catch everything
                 raise StorageError(
-                    f"STORAGE FATAL: Byte-copy transmission failed: {fallback_err}")
+                    f"STORAGE FATAL: Byte-copy transmission failed to {dst.parent}: {str(fallback_err)}")
