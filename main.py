@@ -8,7 +8,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, Body, BackgroundTasks, Depends, APIRouter
 from fastapi.staticfiles import StaticFiles
 
-from backend import parser, database, metadata, scout
+from backend import parser, database, metadata, scout, worker
 from backend.models import GameModel, QueuePayload, BulkActionPayload
 from backend.auth import validate_api_key
 from backend.logger import logger, LOG_FILE
@@ -36,20 +36,18 @@ async def lifespan(app: FastAPI):
     await asyncio.to_thread(_provision_directories)
     await asyncio.to_thread(database.get_or_generate_api_key)
 
-    logger.info("Starting Background Worker and Metadata Scout...")
-    worker_task = asyncio.create_task(run_async_worker())
-    scout_task = asyncio.create_task(run_async_scout())
+    #! ARCHITECTURE: sequenced start to prevent SQLite lock contention during TSV injestion
+    # Woker and Scout are delayed until the primary datasync finishes.
+    async def _delayed_start():
+        await asyncio.to_thread(parser.sync_database)
+        logger.info("Background services initializing...")
+        global worker_task, scout_task
+        worker_task = asyncio.create_task(run_async_worker())
+        scout_task = asyncio.create_task(run_async_scout())
 
-    #! ARCHITECTURE: Sync decoupled from boot process to unblock the API listen state
-    asyncio.create_task(asyncio.to_thread(parser.sync_database))
+    asyncio.create_task(_delayed_start())
 
     yield
-
-    logger.info("Shutting down background tasks...")
-    from backend.worker import shutdown_event
-    shutdown_event.set()
-    worker_task.cancel()
-    scout_task.cancel()
 
 
 async def run_async_worker():

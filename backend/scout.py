@@ -1,6 +1,7 @@
 import re
 import time
 from pathlib import Path
+from turtle import title
 
 from backend import database, metadata
 from backend.models import GameStatus
@@ -85,24 +86,30 @@ def run_library_sync():
     conn.row_factory = sqlite3.Row
 
     #! ARCHITECTURE: Disk reality enforcement. Cleans up DB orphans if user manually deleted folder from disk
-    completed = conn.execute(
-        "SELECT title_id, name FROM queue WHERE status = 'completed'").fetchall()
-    missing_from_disk = []
-    for row in completed:
-        tid = row['title_id']
-        name = row['name']
-        safe_folder = get_safe_name(name, tid)
-        expected_path = settings.library_dir / safe_folder
+    # Cleans the ghost library issue without requiring a db wipe
+    try:
+        completed_items = conn.execute(
+            "SELECT title_id, name FROM queue WHERE status = 'completed'").fetchall()
 
-        if not StorageManager.path_exists(expected_path):
-            missing_from_disk.append((tid,))
-            logger.info(
-                f"Scout: {name} missing from disk. Marking for database removal.")
+        orphans = []
+        for item in completed_items:
+            safe_folder = get_safe_name(item['name'], item['title_id'])
+            safe_path = settings.library_dir / safe_folder
 
-    if missing_from_disk:
-        conn.executemany(
-            "DELETE FROM queue WHERE title_id = ?", missing_from_disk)
-        conn.commit()
+            if not StorageManager.path_exists(safe_path):
+                logger.warning(f"SCOUT: {item['name']} [{
+                               item['title_id']}] missing from disk. Purging from database.")
+                orphans.append((item['title_id'],))
+
+        if orphans:
+            conn.executemany("DELETE FROM queue WHERE title_id = ?", orphans)
+            conn.commit()
+            logger.info(f"SCOUT: Successfully purged {
+                        len(orphans)} ghost records.")
+
+    except sqlite3.Error as e:
+        logger.error(
+            f"SCOUT ERROR: Database contention prevented ghosts purge: {e}")
 
     sql = '''
         SELECT g.title_id, g.name FROM games g
