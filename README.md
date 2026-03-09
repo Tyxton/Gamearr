@@ -1,4 +1,4 @@
-# Gamearr (v0.4.47)
+# Gamearr (v0.4.50)
 
 **Gamearr** is the definitive Video Game PVR for the `*arr` ecosystem. It automates the discovery, metadata collection, and management of you video game library with a focus on ease of use and the classic `*arr` aesthetic.
 
@@ -49,7 +49,7 @@ services:
 We follow semantic versioning. For stability, you can pin your deployment to a specific release instead of `latest`.
 
 * `ghcr.io/tyxton/gamearr:latest` - The most recent stable release.
-* `ghcr.io/tyxton/gamearr:v0.4.47` - The current v0.4 alpha build
+* `ghcr.io/tyxton/gamearr:v0.4.50` - The current v0.4 alpha build
 
 ---
 
@@ -119,7 +119,7 @@ LIBRARY_DIR=/library
 
 ## Feature Roadmap
 
-Gamearr is currently in **Active Alpha (v0.4.x)**. Our goal is to reach parity with the core features of the \*arr stack while respecting the unique requirements of video game preservation.
+Gamearr is currently in **Active Alpha (v0.5.x)**. Our goal is to reach parity with the core features of the \*arr stack while respecting the unique requirements of video game preservation.
 
 | Version  | Focus                | Key Objectives                                                                                                    |
 | :------- | :------------------- | :---------------------------------------------------------------------------------------------------------------- |
