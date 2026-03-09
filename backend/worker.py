@@ -53,12 +53,15 @@ def start_worker():
                     database.update_queue_status(
                         title_id, GameStatus.IMPORTING)
                     final_destination: Path = settings.library_dir / safe_folder
-
+                    logger.info(f"IMPORT: Starting physical transfer of {
+                                title_id} to library...")
                     try:
                         #! ARCHITECTURE: Utilizing StorageManager for atomic operations across shares
                         #! DESTRUCTIVE: This breaks the previous shutil.move
                         StorageManager.atomic_move(
                             source_folder, final_destination)
+                        logger.info(
+                            f"IMPORT: {name} successfully commited to library.")
 
                         database.update_queue_status(
                             title_id, GameStatus.COMPLETED)

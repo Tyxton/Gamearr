@@ -38,6 +38,19 @@ class StorageManager:
             return False
 
     @staticmethod
+    def is_populated(path: Path) -> bool:
+        '''
+        ARCHITECTURE: Verifies that a directory is not only existent but also contains data.
+        Prevnting false positives from empty directories created by failed streams.
+        '''
+        try:
+            return path.is_dir() and any(path.iterdir())
+        except (OSError, PermissionError) as e:
+            logger.error(
+                f"STORAGE ERROR: Could not verify if target directory is populated: {e}")
+            return False
+
+    @staticmethod
     def purge_dir(path: Path) -> None:
         '''
         DESTRUCTIVE: Specifically for cleaning up any ghost data from failed/interuppted tasks.
@@ -96,10 +109,14 @@ class StorageManager:
             raise StorageError(f"STORAGE ERROR: Source path vanished: {src}")
 
         if dst.exists():
+            logger.info(f"STORAGE: Destination {
+                        dst} exists. Preparing to overwrite.")
             StorageManager.purge_dir(dst)
 
         try:
             src.rename(dst)
+            logger.info(f"STORAGE: Atomic move successful: {src.name}")
+
         except (OSError, PermissionError) as e:
             #! ARCHITECTURE: Catching cross-device link or stale NFS handles
             logger.warning(
@@ -110,14 +127,44 @@ class StorageManager:
                     #! ARCHITECTURE: copytree with dirs_exist_ok and symlinks=False
                     # to maximize compatibility with network shares
                     shutil.copytree(str(src), str(
-                        dst), dirs_exist_ok=True, copy_function=shutil.copy)
+                        dst), dirs_exist_ok=True, copy_function=shutil.copy, ignore_dangling_symlinks=True)
+                    logger.info(
+                        f"STORAGE: Byte-copy completed for directory: {src.name}")
                     StorageManager.purge_dir(src)
                 else:
                     #! ARCHITECTURE: dropping down to shutil.copy from copy2 to ignore metadata permission failures.
                     # initially, transferring metadata was a priority, but this failed in my own homelab setup.
                     shutil.copy(str(src), str(dst))
-                    src.unlink()
-            except Exception as fallback_err:
-                #! DEBT: byte copies were falling with no error output as to why, catch everything
+                    logger.info(
+                        f"STORAGE: Byte-copy completed for file: {src.name}")
+
+                #! ARCHITETURE: If the bytes are on the NAS, the move is successful, even during failed cleanup
+                if StorageManager.is_populated(dst) if dst.is_dir() else dst.exists():
+                    try:
+                        if src.is_dir():
+                            StorageManager.purge_dir(src)
+                        else:
+                            src.unlink()
+                    except (OSError, PermissionError) as cleanup_err:
+                        logger.warning(
+                            f"STORAGE WARNING: Import succeeded but source cleanup failed: {cleanup_err}")
+                    return
+                else:
+                    raise StorageError(
+                        "Verification failed: Destination is empty after copy.")
+
+            except shutil.Error as se:
+                err_details = "; ".join([f"Source: {s}, Dest: {d}, Reason: {
+                                        e}" for s, d, e in se.args[0]])
+                if StorageManager.is_populated(dst) if dst.is_dir() else dst.exists():
+                    logger.warning(
+                        f"STORAGE WARNING: shutil reported errors, but verification passed: {err_details}")
+                    return
                 raise StorageError(
-                    f"STORAGE FATAL: Byte-copy transmission failed to {dst.parent}: {str(fallback_err)}")
+                    f"STORAGE FATAL: Multi-file copy failure: {err_details}")
+            except (OSError, PermissionError, IOError) as fallback_err:
+                raise StorageError(
+                    f"STORAGE FATAL: Byte-copy transmission failed: {str(fallback_err)}")
+            except Exception as critical_err:
+                raise StorageError(
+                    f"STORAGE CRITICAL: Unexpected I/O collapse: {str(critical_err)}")
