@@ -63,8 +63,10 @@ def start_worker():
                         database.update_queue_status(
                             title_id, GameStatus.COMPLETED)
                         scout_title(title_id, name)
-                    except StorageError as e:
+                    except Exception as e:
+                        #! DEBT: byte-copy transfer failed, capure specific error message
                         logger.error(f"Import Failed: {e}")
+                        database.update_queue_error(title_id, str(e))
                         database.update_queue_status(
                             title_id, GameStatus.FAILED)
                 else:

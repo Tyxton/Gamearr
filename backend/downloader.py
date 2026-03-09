@@ -62,8 +62,8 @@ def download_pkg(url, title_id, name):
             match = PROGRESS_RE.search(line)
             if match:
                 new_percent = int(match.group(1))
-
-                if new_percent != current_percent and (time.time() - last_update_time) > 2.0:
+                #! ARCHITECTURE: dropping the update interval to 5s to reduce the WAL contention and UI lag
+                if new_percent != current_percent and (time.time() - last_update_time) > 5.0:
                     current_percent = new_percent
                     last_update_time = time.time()
 

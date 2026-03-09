@@ -256,6 +256,13 @@ def revert_stuck_queue():
         conn.close()
 
 
+def update_queue_error(title_id: str, error_msg: str):
+    #! ARCHITECTURE: Persistent error logging
+    conn = get_db_connection()
+    conn.execute("UPDATE queue SET error_msg = ? WHERE title_id = ?",
+                 (error_msg, title_id))
+
+
 def get_or_generate_api_key():
     key = get_config("api_key")
     if not key:
