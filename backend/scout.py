@@ -1,29 +1,25 @@
-import os
 import re
 
 from backend import database, metadata
 from backend.models import GameStatus
 from backend.logger import logger
-
-LIBRARY_DIR = os.getenv("LIBRARY_DIR", "/library")
+from backend.config import settings
 
 
 def run_meta_scout(single_id=None):
     conn = database.get_db_connection()
     target_ids = []
 
-    # If we are scouting a specific ID (i.e. just finished download)
     if single_id:
         target_ids.append(single_id.upper())
     else:
-        # Scan the physical library for Title IDs
-        if os.path.exists(LIBRARY_DIR):
-            folders = [f for f in os.listdir(LIBRARY_DIR) if os.path.isdir(
-                os.path.join(LIBRARY_DIR, f))]
-            for folder in folders:
-                match = re.search(r'\[(.*?)\]', folder)
-                if match:
-                    target_ids.append(match.group(1).upper())
+        #! DESTRUCTIVE: os module removed. iterdir() protects against symlink loops natively.
+        if settings.library_dir.exists():
+            for folder in settings.library_dir.iterdir():
+                if folder.is_dir():
+                    match = re.search(r'\[(.*?)\]', folder.name)
+                    if match:
+                        target_ids.append(match.group(1).upper())
 
         active_statuses = [
             GameStatus.PENDING,
@@ -36,20 +32,18 @@ def run_meta_scout(single_id=None):
 
         placeholders = ', '.join(['?'] * len(active_statuses))
         sql = f"SELECT title_id FROM queue WHERE status IN ({placeholders})"
-        # Scan the queue to grab metadata as they download
+
         queued_items = conn.execute(
             sql, [s.value for s in active_statuses]).fetchall()
         for item in queued_items:
             target_ids.append(item['title_id'].upper())
 
-    # remove duplicates
     target_ids = list(set(target_ids))
 
     if not target_ids:
         conn.close()
         return
 
-    # only fetch metadata for these IDs if it doesn't exist yet
     placeholders = ', '.join(['?'] * len(target_ids))
     sql = f'''
         SELECT title_id, name FROM games
@@ -72,8 +66,6 @@ def run_meta_scout(single_id=None):
 
 
 def scout_title(title_id, name):
-    ''' Scout for a single title '''
-    # check if it exists already
     cached = database.get_cached_metadata(title_id)
     if cached and "placeholder.png" not in str(cached[1]):
         return cached
@@ -83,12 +75,39 @@ def scout_title(title_id, name):
 
 
 def run_library_sync():
-    ''' Full sync that only runs on startup or manual trigger '''
     import sqlite3
+    from backend.downloader import get_safe_name
+    from backend.storage import StorageManager
+
     conn = database.get_db_connection()
     conn.row_factory = sqlite3.Row
 
-    # We only want games that are in the Queue (Active/Completed) OR Monitored
+    #! ARCHITECTURE: Disk reality enforcement. Cleans up DB orphans if user manually deleted folder from disk
+    # Cleans the ghost library issue without requiring a db wipe
+    try:
+        completed_items = conn.execute(
+            "SELECT title_id, name FROM queue WHERE status = 'completed'").fetchall()
+
+        orphans = []
+        for item in completed_items:
+            safe_folder = get_safe_name(item['name'], item['title_id'])
+            safe_path = settings.library_dir / safe_folder
+
+            if not StorageManager.path_exists(safe_path):
+                logger.warning(f"SCOUT: {item['name']} [{
+                               item['title_id']}] missing from disk. Purging from database.")
+                orphans.append((item['title_id'],))
+
+        if orphans:
+            conn.executemany("DELETE FROM queue WHERE title_id = ?", orphans)
+            conn.commit()
+            logger.info(f"SCOUT: Successfully purged {
+                        len(orphans)} ghost records.")
+
+    except sqlite3.Error as e:
+        logger.error(
+            f"SCOUT ERROR: Database contention prevented ghosts purge: {e}")
+
     sql = '''
         SELECT g.title_id, g.name FROM games g
         LEFT JOIN metadata m ON g.title_id = m.title_id
@@ -110,7 +129,7 @@ def run_library_sync():
     for item in missing:
         scout_title(item['title_id'], item['name'])
         import time
-        time.sleep(1)  # Polite delay for IGDB
+        time.sleep(1)
 
 
 if __name__ == "__main__":

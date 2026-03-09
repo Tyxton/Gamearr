@@ -1,24 +1,24 @@
 import secrets
-import os
 import sqlite3
 import pandas as pd
 import numpy as np
+from pathlib import Path
+
+# corrected malformed `import pathlib as Path` which
+# induces runtime AttributeError during Pydantic schema validation.
 
 from backend.logger import logger
-
-# Fallback to local if the ENV isn't set (like during local dev)
-DB_PATH = os.getenv("DB_PATH", "/app/data/gamearr.db")
-
-# --- Helper for thread-safe/process-safe connections ---
+from backend.config import settings
 
 
 def get_db_connection():
-    # timeout=20 tells the worker to wait if the UI is currently writing
-    conn = sqlite3.connect(DB_PATH, timeout=20)
-    # Enable WAL mode: allows simultaneous reading and writing
+    #! DESTRUCTIVE: Hardcoded OS paths stripped. Structural path validation via Pydantic model.
+    settings.db_path.parent.mkdir(parents=True, exist_ok=True)
+
+    conn = sqlite3.connect(str(settings.db_path), timeout=20)
+    #! ARCHITECTURE: WAL mode for improved concurrency and performance
     conn.execute("PRAGMA journal_mode=WAL;")
     conn.execute("PRAGMA synchronous=NORMAL;")
-    # Allows user to look up a game not found the local TSV, just in case
     conn.execute("PRAGMA foreign_keys = ON;")
     return conn
 
@@ -28,7 +28,6 @@ def init_db():
         conn = get_db_connection()
         cursor = conn.cursor()
 
-        # TSV Parser Config
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS config (
                 key TEXT PRIMARY KEY,
@@ -36,7 +35,6 @@ def init_db():
             )
         ''')
 
-        # Raw Sony Data
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS games (
                 title_id TEXT PRIMARY KEY COLLATE NOCASE,
@@ -48,7 +46,6 @@ def init_db():
             )
         ''')
 
-        # IGDB Metadata Cache
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS metadata (
                 title_id TEXT PRIMARY KEY COLLATE NOCASE,
@@ -59,7 +56,6 @@ def init_db():
             )
         ''')
 
-        # The Queue / Status Table
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS queue (
                 title_id TEXT PRIMARY KEY COLLATE NOCASE,
@@ -77,18 +73,20 @@ def init_db():
             )
         ''')
 
-        # add monitored column to games table if it doesn't exist
         try:
             cursor.execute(
                 "ALTER TABLE games ADD COLUMN monitored INTEGER DEFAULT 0")
-        except:
-            pass  # already exists
+        except sqlite3.OperationalError:
+            #! DEBT SQLite lacks an 'ADD COLUMN IF NOT EXISTS' syntax.
+            # trapping the OperationalError safely bypasses this duplicate column constraint on hosts
+            # without masking deeper I/O locking failures
+            pass
 
         conn.commit()
         conn.close()
         return True
-    except Exception as e:
-        print(f"Database Init Error: {e}")
+    except sqlite3.Error as e:
+        logger.error(f"STORAGE FATAL: Database Initialization dropped: {e}")
         return False
 
 
@@ -212,7 +210,9 @@ def add_to_queue(platform, title_id, region, name, pkg_url, license_key):
         conn.commit()
         logger.info(f"QUEUE: {name} [{title_id}] added to queue.")
         return True
-    except Exception as e:
+    except sqlite3.Error as e:
+        #! ARCHITECTURE: restored strict sqlite3.Error trapping to ensure WAL/Lock faults
+        # are identified over generic exceptions
         logger.error(f"QUEUE ERROR: Failed to queue {name} - {e}")
         return False
     finally:
@@ -236,6 +236,33 @@ def get_next_queued_task():
         "SELECT * FROM queue WHERE status = 'pending' ORDER BY added_at ASC LIMIT 1").fetchone()
     conn.close()
     return res
+
+
+def revert_stuck_queue():
+    #! ARCHITECTURE: Ensures pending downloads interrupted by host crash resume gracefully
+    # SIGINT, SIGKILL, Power Outage, etc.
+    conn = get_db_connection()
+    try:
+        conn.execute('''
+            UPDATE queue
+            SET status = 'pending'
+            WHERE status IN ('downloading', 'extracting', 'importing')
+        ''')
+        conn.commit()
+        logger.info("Database: Reverted stale queue items to 'pending'.")
+    except sqlite3.Error as e:
+        logger.error(f"STORAGE ERROR: Failed to recover queue state - {e}")
+    finally:
+        conn.close()
+
+
+def update_queue_error(title_id: str, error_msg: str):
+    #! ARCHITECTURE: Persistent error logging
+    conn = get_db_connection()
+    conn.execute("UPDATE queue SET error_msg = ? WHERE title_id = ?",
+                 (error_msg, title_id))
+    conn.commit()
+    conn.close()
 
 
 def get_or_generate_api_key():

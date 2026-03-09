@@ -1,20 +1,14 @@
-import os
+import sqlite3
 import pandas as pd
 import requests
 import numpy as np
 from io import StringIO
 from backend import database
 from backend.logger import logger
-
-MANIFESTS = {
-    "vita": os.getenv("GAME_SOURCE_VITA"),
-    "psp":  os.getenv("GAME_SOURCE_PSP"),
-    "psx": os.getenv("GAME_SOURCE_PSX")
-}
+from backend.config import settings
 
 
 def sync_database():
-
     mapping = {
         'Title ID': 'title_id',
         'Region': 'region',
@@ -25,8 +19,14 @@ def sync_database():
         'RAP': 'license_key',
     }
 
-    # filter out any platforms without a URL
-    active_manifests = {k: v for k, v in MANIFESTS.items() if v}
+    #! DESTRUCTIVE: os.getenv stripped entirely. Valued loaded stricly through Pydantic config.
+    active_manifests = {
+        "vita": settings.source_vita,
+        "psp": settings.source_psp,
+        "psx": settings.source_psx
+    }
+
+    active_manifests = {k: v for k, v in active_manifests.items() if v}
 
     if not active_manifests:
         logger.warning(
@@ -48,15 +48,12 @@ def sync_database():
                 logger.info(
                     f"New {platform.upper()} manifest available. Parsing and seeding to database...")
                 data = StringIO(response.text)
-                # preload the TSV to avoid 'usecols' mismatch errors
-                # handle shifted headers
                 df = pd.read_csv(data, sep='\t', on_bad_lines='skip')
 
-                # map columns before init
                 df = df.rename(columns=mapping)
                 df['platform'] = platform
 
-                # Sanitize Title ID to prevent Primary Key collisions, PSX manifests often
+                #! CRUCIAL: Sanitize Title ID to prevent Primary Key collisions, PSX manifests often
                 # have trailing/leading spaces in IDs.
                 # also implementing forced casing which should catch 'scus-123' vs 'SCUS-123'
                 if 'title_id' in df.columns:
@@ -66,16 +63,12 @@ def sync_database():
                 cols = ['title_id', 'platform', 'region',
                         'name', 'pkg_url', 'license_key']
 
-                # safely create db_ready_df
                 db_ready_df = df[[c for c in cols if c in df.columns]].copy()
                 for missing_col in set(cols) - set(db_ready_df.columns):
                     db_ready_df[missing_col] = np.nan
 
-                # smart dedup:
-                # sort so that rows WITH values in pkg_url/license_key are at the top.
-                # this ensures keep='first' graps the most complete data.
                 db_ready_df = db_ready_df.sort_values(
-                    by=['title_id', 'pkg_url', 'license_key'],
+                    by=['title_id', 'pkg_url', 'license_key'],  # as List[str]
                     na_position='last'
                 )
 
@@ -86,22 +79,15 @@ def sync_database():
                 db_ready_df = db_ready_df.drop_duplicates(
                     subset=['title_id'], keep='first')
 
-                # cleanup db_ready_df
                 db_ready_df = db_ready_df.dropna(subset=['title_id', 'name'])
-
-                # Fill missing license_key with a placeholder to satisfy DB constraints,
-                # This is something we had in previous versions, but got accidently removed
                 db_ready_df['license_key'] = db_ready_df['license_key'].fillna(
                     "MISSING")
-
-                # Just in case, make sure any leftover NaN variables are Python None
+                #! CRUCIAL: Make sure any NaNs are converted to JSON None
                 db_ready_df = db_ready_df.astype(
                     object).replace({np.nan: None})
 
                 conn = database.get_db_connection()
                 try:
-                    # define the safe bulk-upsert query
-                    # if the title_id exists, we udpate the pkg_url/license_key in case they changes
                     sql = '''
                         INSERT OR REPLACE INTO games (title_id, platform, region, name, pkg_url, license_key)
                         VALUES (?, ?, ?, ?, ?, ?)
@@ -117,7 +103,7 @@ def sync_database():
                     conn.commit()
                     logger.info(
                         "Database sync: UPSERT complete. No downtime occurred.")
-                except Exception as e:
+                except sqlite3.Error as e:
                     logger.error(f"PARSING ERROR: Database insertion failed for {
                                  platform}: {e}")
                 finally:
@@ -132,5 +118,5 @@ def sync_database():
                 logger.info(
                     f"{platform.upper()} manifest is unchanged. Skipping.")
 
-        except Exception as e:
+        except requests.RequestException as e:
             logger.error(f"Failure during {platform} sync: {e}")

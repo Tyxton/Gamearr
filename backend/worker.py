@@ -1,32 +1,27 @@
-import time
-import os
-import shutil
-from typing import final
+from pathlib import Path
+import threading
+
 from backend import database, downloader, extractor
 from backend.models import GameStatus
 from backend.logger import logger
+from backend.config import settings
+from backend.storage import StorageManager
+from backend.scout import scout_title
+from backend.exceptions import StorageError
 
-# Force absolute path if not already to avoid permission failures
-raw_incomplete = os.getenv("INCOMPLETE_DIR", "/downloads")
-if not raw_incomplete.startswith("/"):
-    raw_incomplete = f"/{raw_incomplete}"
-INCOMPLETE_DIR = os.path.abspath(raw_incomplete)
-
-raw_library = os.getenv("LIBRARY_DIR", "/library")
-if not raw_library.startswith("/"):
-    raw_library = f"/{raw_library}"
-LIBRARY_DIR = os.path.abspath(raw_library)
+shutdown_event = threading.Event()
 
 
 def start_worker():
+    #! ARCHITECTURE: This loop is designed to be called via asyncio.to_thread.
+    # it consumes the SQLite queue sequentially to prevent file lock contention.
     logger.info("Worker standby... waiting for Database initialization.")
 
-    while True:
+    while not shutdown_event.is_set():
         try:
-            # check for next pending game
             get_next = database.get_next_queued_task()
             if not get_next:
-                return  # nothing to do, return to the async wrapper's sleep
+                return
 
             title_id = get_next['title_id']
             name = get_next['name']
@@ -34,11 +29,9 @@ def start_worker():
             pkg_url = get_next['pkg_url']
             license_key = get_next['license_key']
 
-            logger.info(f"\nFound in queue: {name} ({platform.upper()})")
+            logger.info(f"Found in queue: {name} ({platform.upper()})")
 
-            # update status
             database.update_queue_status(title_id, GameStatus.DOWNLOADING)
-
             success = downloader.download_pkg(pkg_url, title_id, name)
 
             if success:
@@ -46,54 +39,47 @@ def start_worker():
                     f"Download complete. Starting extraction for {title_id}...")
                 database.update_queue_status(title_id, GameStatus.EXTRACTING)
 
-                # contruct path
                 from backend.downloader import get_safe_name
-                # add the title_id so that the folder is globally unique
                 safe_folder = get_safe_name(name, title_id)
 
-                pkg_file = os.path.join(
-                    INCOMPLETE_DIR, safe_folder, f"{title_id}.pkg")
+                #! DESTRUCTIVE: os.path replaced in favor of pathlib
+                source_folder: Path = settings.incomplete_dir / safe_folder
+                pkg_file: Path = source_folder / f"{title_id}.pkg"
 
-                # now extract
                 if extractor.extract_pkg(pkg_file, license_key, platform):
                     logger.info(
-                        f"Extraction Complete. Moving to Library: {name}")
+                        f"extraction Complete. Moving to Library: {name}")
 
-                    # Importing Logic
                     database.update_queue_status(
                         title_id, GameStatus.IMPORTING)
-                    source_folder = os.path.join(INCOMPLETE_DIR, safe_folder)
-                    final_destination = os.path.join(LIBRARY_DIR, safe_folder)
+                    final_destination: Path = settings.library_dir / safe_folder
+                    logger.info(f"IMPORT: Starting physical transfer of {
+                                title_id} to library...")
                     try:
-                        if os.path.exists(final_destination):
-                            shutil.rmtree(final_destination)
-
-                        # Atomic Moves: 1. Try Rename, 2. Fall back to copytree+rmtree
-                        try:
-                            os.rename(source_folder, final_destination)
-                        except OSError:
-                            logger.info(
-                                f"Cross-device move detected for {name}. Copying...")
-                            shutil.copytree(source_folder, final_destination)
-                            shutil.rmtree(source_folder)
+                        #! ARCHITECTURE: Utilizing StorageManager for atomic operations across shares
+                        #! DESTRUCTIVE: This breaks the previous shutil.move
+                        StorageManager.atomic_move(
+                            source_folder, final_destination)
+                        logger.info(
+                            f"IMPORT: {name} successfully commited to library.")
 
                         database.update_queue_status(
                             title_id, GameStatus.COMPLETED)
-                        # Trigger Scout for just this ID
-                        from backend.scout import scout_title
                         scout_title(title_id, name)
                     except Exception as e:
+                        #! DEBT: byte-copy transfer failed, capure specific error message
                         logger.error(f"Import Failed: {e}")
+                        database.update_queue_error(title_id, str(e))
                         database.update_queue_status(
                             title_id, GameStatus.FAILED)
                 else:
-                    logger.error(f"Extraction failed for {name}")
+                    logger.error(f"Extraction Failed: {name}")
                     database.update_queue_status(title_id, GameStatus.FAILED)
-            else:
-                database.update_queue_status(title_id, GameStatus.FAILED)
-
         except Exception as e:
-            logger.error(f"Worker Error during {name}: {e}")
+            #! ARCHITECTURE: The worker is a daemonized background loop.
+            # it must trap broad exceptions at the highest level to survive unforseen drops
+            # (e.g. SQLite lock timeouts) without exiting the thread permanently
+            logger.error(f"Worker Error: {e}")
 
 
 if __name__ == "__main__":

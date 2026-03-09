@@ -1,19 +1,17 @@
 import time
-import os
 import re
 import requests
 from dotenv import load_dotenv
 from backend import database
 from backend.logger import logger
-
-load_dotenv()
-
-client_id = os.getenv("IGDB_CLIENT_ID")
-client_secret = os.getenv("IGDB_CLIENT_SECRET")
+from backend.config import settings
 
 
 def get_valid_token():
-    """Checks the DB for a valid token, refreshes from Twitch if expired."""
+    ''' 
+    Checks the DB for a valid token, refreshes from Twitch if expired.
+    DESTRUCTIVE: Removed os.getenv dependencies. Credentials flow strictly though Pydantic Settings graph.
+    '''
     token = database.get_config("igdb_token")
     expiry = database.get_config("igdb_expiry")
     current_time = int(time.time())
@@ -21,8 +19,8 @@ def get_valid_token():
     if not token or not expiry or current_time >= (int(expiry) - 60):
         url = "https://id.twitch.tv/oauth2/token"
         params = {
-            "client_id": client_id,
-            "client_secret": client_secret,
+            "client_id": settings.igdb_client_id,
+            "client_secret": settings.igdb_client_secret,
             "grant_type": "client_credentials"
         }
         try:
@@ -34,14 +32,18 @@ def get_valid_token():
             database.set_config("igdb_token", token)
             database.set_config("igdb_expiry", str(new_expiry))
             return token
-        except Exception as e:
+        except requests.RequestException as e:
+            #! ARCHITECTURE: Explicit request.RequestException traps network and OAuth timeouts
             logger.error(f"CRITIAL ERROR: Could not refresh IGDB token: {e}")
             return None
     return token
 
 
 def get_game_metadata(title_id, game_name):
-    """Queries local DB first then IGDB."""
+    '''
+    Queries local DB first than IGDB.
+    ARCHITECTURE: Regex sanitation preserves critical indexing syntax (colons, hyphens) while stripping tags like (USA or PCSE).
+    '''
     cached = database.get_cached_metadata(title_id)
     if cached and "placeholder.png" not in str(cached[1]):
         return {"name": game_name, "summary": cached[0], "cover_url": cached[1]}
@@ -50,18 +52,15 @@ def get_game_metadata(title_id, game_name):
     if not token:
         return None
 
-    # ONLY remove (USA), [PCSE00120], etc.
-    # KEEP colons, hyphens, and apostrophes (e.g., "Metal Gear Solid: Peace Walker")
     clean_name = re.sub(r'\(.*?\)|\[.*?\]', '', game_name).strip()
 
     url = "https://api.igdb.com/v4/games"
     headers = {
-        "Client-ID": client_id,
+        "Client-ID": settings.igdb_client_id,
         "Authorization": f"Bearer {token}",
         "Content-Type": "text/plain"
     }
 
-    # We search for the name, but we ask for 5 results so we can find the best "Main Game"
     body = f'search "{
         clean_name}"; fields name, summary, cover.url, category; limit 5;'
 
@@ -73,8 +72,6 @@ def get_game_metadata(title_id, game_name):
             results = response.json()
 
             if results:
-                # Filter results for: 0 (Main Game), 8 (Remake), 9 (Remaster), 10 (Expanded Game)
-                # This ignores Soundtracks, DLCs, and Bundles
                 valid_categories = [0, 8, 9, 10, 11]
                 best_match = None
 
@@ -83,7 +80,6 @@ def get_game_metadata(title_id, game_name):
                         best_match = res
                         break
 
-                # Fallback: If no "Main Game" found, just take the first result with a cover
                 if not best_match:
                     for res in results:
                         if 'cover' in res:
@@ -101,7 +97,7 @@ def get_game_metadata(title_id, game_name):
                     return {"name": best_match.get("name"), "summary": summary, "cover_url": hd_cover}
 
             logger.info(f"IGDB: No suitable match found for '{clean_name}'")
-    except Exception as e:
+    except requests.RequestException as e:
         logger.error(f"IGDB Comms Failure: {e}")
 
     return {"cover_url": "/assets/placeholder.png", "summary": "Metadata not found."}
