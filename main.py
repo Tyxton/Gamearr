@@ -8,7 +8,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, Body, BackgroundTasks, Depends, APIRouter
 from fastapi.staticfiles import StaticFiles
 
-from backend import parser, database, metadata, scout, worker
+from backend import parser, database, metadata, scout
 from backend.models import GameModel, QueuePayload, BulkActionPayload
 from backend.auth import validate_api_key
 from backend.logger import logger, LOG_FILE
