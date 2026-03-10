@@ -1,6 +1,8 @@
 from pydantic_settings import BaseSettings
 from pydantic import Field
 from pathlib import Path
+import platform as plat_lib
+import shutil
 
 
 class Settings(BaseSettings):
@@ -42,6 +44,21 @@ class Settings(BaseSettings):
     #! ARCHITECTURE: throttle concurrency to prevent multiple streams from saturating NAS disk heads
     max_concurent_io: int = Field(
         default=1, validation_alias="MAX_CONCURRENT_IO")
+
+    @property
+    def is_arm(self) -> bool:
+        return plat_lib.machine().startswith(('arm', 'aarch'))
+
+    def get_io_limit(self) -> int:
+        #! ARCHITECTURE: Auto throttle for ARM to prevent overloading the SD cards
+        return 1 if self.is_arm else self.max_concurent_io
+
+    def validate_dependencies(self) -> list[str]:
+        missing = []
+        for cmd in ["aria2c", "pkg2zip"]:
+            if not shutil.which(cmd):
+                missing.append(cmd)
+        return missing
 
     class Config:
         env_file = ".env"

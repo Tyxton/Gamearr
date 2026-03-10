@@ -1,4 +1,5 @@
 import time
+import os
 import errno
 import shutil
 import threading
@@ -127,8 +128,27 @@ class MountManager:
             try:
                 with src.open('rb') as fsrc:
                     with dst.open('wb') as fdst:
-                        shutil.copyfileobj(
-                            fsrc, fdst, length=settings.io_buffer_size)
+                        bytes_since_sync = 0
+                        sync_threshold = 10 * 1024 * 1024
+
+                        while True:
+                            chunk = fsrc.read(settings.io_buffer_size)
+                            if not chunk:
+                                break
+                            fdst.write(chunk)
+
+                            #! ARCHITECTURE: ARM write smoothing, to be honest
+                            # I've never worked nor have any way to test ARM-
+                            # based systems, used at your discretion
+                            if settings.is_arm:
+                                bytes_since_sync += len(chunk)
+                                if bytes_since_sync >= sync_threshold:
+                                    fdst.flush()
+                                    os.fsync(fdst.fileno())
+                                    bytes_since_sync = 0
+
+                fdst.flush()
+                os.fsync(fdst.fileno())
 
                 self._apply_identity_mapping(dst)
             except PermissionError:

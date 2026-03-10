@@ -5,7 +5,7 @@ from pathlib import Path
 
 from backend.logger import logger
 from backend.config import settings
-from backend.storage import StorageManager
+from backend.storage import MountManager
 from backend import database
 from backend.worker import shutdown_event
 from backend.models import GameStatus
@@ -15,21 +15,18 @@ PROGRESS_RE = re.compile(r'\((\d+)%\)')
 
 def download_pkg(url, title_id, name):
     safe_name = get_safe_name(name, title_id)
-
-    #! DESTRUCTIVE: os.makedirs removed,
     download_dir: Path = settings.incomplete_dir / safe_name
 
-    #! ARCHITECTURE: Purge ghost data from previous failed/crashed attempts.
-    StorageManager.purge_dir(download_dir)
+    MManager = MountManager()
 
-    #! ARCHITECTURE: StorageManager ensures the mount is writable **before** calling aria2c
-    StorageManager.ensure_dir(download_dir)
+    MManager.purge_dir(download_dir)
+    MManager.ensure_dir(download_dir)
+
+    threads = "4" if settings.is_arm else "16"
 
     command = [
-        # 16 threads split to allow full saturation of gigabit lan
-        "aria2c", "-x", "16", "-s", "16",
+        "aria2c", "-x", threads, "-s", threads,
         "-d", str(download_dir), "-o", f"{title_id}.pkg",
-        # connect timeout set to 30s to catch drops early
         "--connect-timeout=30", "--timeout=60", "--split=16",
         "--summary-interval=1", "--console-log-level=notice",
         "--allow-overwrite=true", url
@@ -54,7 +51,6 @@ def download_pkg(url, title_id, name):
 
         for line in process.stdout:
             if shutdown_event.is_set():
-                #! ARCHITECTURE: Aborts native subprocess gracefully preventing Uvicorn hang
                 update_progress(title_id, current_percent, 0, 0)
                 database.update_queue_status(title_id, GameStatus.PENDING)
                 process.terminate()
@@ -65,7 +61,6 @@ def download_pkg(url, title_id, name):
             match = PROGRESS_RE.search(line)
             if match:
                 new_percent = int(match.group(1))
-                #! ARCHITECTURE: dropping the update interval to 5s to reduce the WAL contention and UI lag
                 if new_percent != current_percent and (time.time() - last_update_time) > 5.0:
                     current_percent = new_percent
                     last_update_time = time.time()
@@ -83,8 +78,6 @@ def download_pkg(url, title_id, name):
                          process.returncode}")
             return False
     except (OSError, subprocess.SubprocessError) as e:
-        #! ARCHITECTURE: isolated to OS and subprocess layers to trap pipe collapses
-        # and execution faults cleanly without swalling standard python runtime errors.
         logger.error(f"DOWNLOADER ERROR: Transfer failed for {name}: {e}")
 
 

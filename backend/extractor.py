@@ -1,13 +1,14 @@
 import subprocess
+import os
 from pathlib import Path
 
 from backend.logger import logger
+from backend.config import settings
 
 
 def extract_pkg(pkg_path: Path, license_key: str, platform: str) -> bool:
     '''
-    #! DESTRUCTIVE: os.path.dirname replace by Path.parent mapping.
-    Isolates cwd context to strictly defines directories to prevent extraction bleed.
+    Lower the process priority on ARM-based systems to ensure the web UI is responsive
     '''
 
     if not pkg_path.exists():
@@ -28,7 +29,26 @@ def extract_pkg(pkg_path: Path, license_key: str, platform: str) -> bool:
             command = ["pkg2zip", pkg_filename, license_key]
 
     try:
-        subprocess.run(command, check=True, cwd=str(work_dir))
+        priority = 15 if settings.is_arm else 0
+
+        logger.info(f"EXTRACTION: Starting pkg2zip (Priotity: {
+                    priority}) for {pkg_filename}")
+
+        def _set_priority():
+            try:
+                os.nice(priority)
+            except AttributeError:
+                #! ARCHITECTURE: Non-POSIX (i.e Windows) don't support nice
+                pass
+
+        subprocess.run(
+            command,
+            check=True,
+            cwd=str(work_dir),
+            preexec_fn=_set_priority if priority > 0 else None,
+            capture_output=True,
+            text=True
+        )
         logger.info(f"Extraction block finalized in {work_dir}")
         return True
     except subprocess.CalledProcessError as e:

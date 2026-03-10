@@ -1,7 +1,6 @@
 import time
 import re
 import requests
-from dotenv import load_dotenv
 from backend import database
 from backend.logger import logger
 from backend.config import settings

@@ -21,6 +21,13 @@ from backend.storage import mount_manager
 async def lifespan(app: FastAPI):
     logger.info("--- Gamearr Startup ---")
 
+    missing_bins = settings.validate_dependencies()
+    if missing_bins:
+        logger.critical(f"SYSTEM FATAL: Missing core dependencies for Gamearr: {
+                        ', '.join(missing_bins)}"
+                        "Aborting...")
+        return
+
     initialized = await asyncio.to_thread(database.init_db)
     if not initialized:
         logger.error("CRITICAL: Database initialization failed.")
