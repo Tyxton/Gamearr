@@ -1,170 +1,168 @@
 import time
 import shutil
 from pathlib import Path
+from typing import TypedDict, Union
 
 from backend.logger import logger
 from backend.exceptions import StorageError
+from backend.models import MountState
+from backend.config import settings
 
 
-class StorageManager:
+class MountManager:
     ''' 
-    Isolates all physical layer interactions.
-    SMB/NFS environments frequently exhibit stale file locks or propogate cross-device link errors.
+    ARCHITECTURE: Replaces the passive StorageManager with active hardware awareness.
+    All static methods are removed to enforce service level state tracking. 
     '''
-    @staticmethod
-    def ensure_dir(path: Path) -> None:
-        ''' 
-        DESTRUCTIVE: Replaces os.makedirs to explicitly trap remote mount permission drops
-        ARCHITECTURE: Trap remote mount permission drops to prevent container crash
+
+    def __init__(self):
+        self._mount_cache: dict[str, MountState] = {}
+        self._failure_timestamps: dict[str, float] = {}
+
+    def _update_state(self, path: Path, state: MountState):
+        path_str = str(path.resolve())
+        if self._mount_cache.get(path_str) != state:
+            self._mount_cache[path_str] = state
+            logger.info(f"STORAGE: Mount {path_str} is now {state.upper()}")
+
+    def check_mount_health(self, path: Path) -> MountState:
         '''
+        ARCHITECTURE: Performs a non-destructive STAT check, if the mount is stale or
+        unresponsive, it updates the stat map.
+        '''
+        path_str = str(path.resolve())
+        try:
+            if path.exists():
+                self._update_state(path, MountState.ONLINE)
+                return MountState.ONLINE
+            else:
+                self._update_state(path, MountState.OFFLINE)
+                return MountState.OFFLINE
+        except (OSError, PermissionError):
+            self._update_state(path, MountState.OFFLINE)
+            self._failure_timestamps[path_str] = time.time()
+            return MountState.OFFLINE
+
+    def ensure_dir(self, path: Path) -> None:
+        '''
+        ARCHITECTURE: Reject if the parent mount is flagged as OFFLINE
+        '''
+        if self.check_mount_health(path) == MountState.OFFLINE:
+            raise StorageError(
+                f"I/O ABORTED: Target mount {path} is OFFLINE.")
 
         try:
             path.mkdir(parents=True, exist_ok=True)
+            if settings.target_uid and settings.target_gid:
+                self._apply_identity_mapping(path)
         except (OSError, PermissionError) as e:
-            #! OPERATOR: Usually means that theres a Proxmox UID/GID mapping mismatch on the LXC mount
-            logger.error(f"STORAGE ERROR: Directory constraint on {path}: {e}")
+            self._update_state(path, MountState.OFFLINE)
             raise StorageError(f"Cannot create directory {path}: {e}")
 
-    @staticmethod
-    def check_write_access(path: Path) -> bool:
-        test_file = path / '.gamearr_test'
-        try:
-            StorageManager.ensure_dir(path)
-            test_file.write_text('test')
-            test_file.unlink()
-            return True
-        except (OSError, PermissionError) as e:
-            logger.error(f"STORAGE ERROR: Write test failed on {path}: {e}")
-            return False
+    def _apply_identity_mapping(self, path: Path):
+        '''
+        ARCHITECTURE: Enforce UID/GID for LXC/NAS compatibility.
+        '''
+        uid = settings.target_uid
+        gid = settings.target_gid
 
-    @staticmethod
-    def is_populated(path: Path) -> bool:
-        '''
-        ARCHITECTURE: Verifies that a directory is not only existent but also contains data.
-        Prevnting false positives from empty directories created by failed streams.
-        '''
-        try:
-            return path.is_dir() and any(path.iterdir())
-        except (OSError, PermissionError) as e:
-            logger.error(
-                f"STORAGE ERROR: Could not verify if target directory is populated: {e}")
-            return False
+        if uid is not None and gid is not None:
+            try:
+                shutil.chown(str(path), user=uid, group=gid)
+            except (OSError, PermissionError) as e:
+                logger.warning("STORAGE WARNING: Could not set ownership on {path} "
+                               f"Error: {e}. (Common on non-POSIX filesystems or unpriviledged LXCs)")
+                pass
 
-    @staticmethod
-    def purge_dir(path: Path) -> None:
-        '''
-        DESTRUCTIVE: Specifically for cleaning up any ghost data from failed/interuppted tasks.
-        '''
-        if not StorageManager.path_exists(path):
-            return
-
-        try:
-            for item in path.glob('**/*'):
-                if item.is_file():
-                    item.unlink()
-            shutil.rmtree(str(path))
-        except (OSError, PermissionError) as e:
-            raise StorageError(
-                f"STROAGE FATAL: Could not purge ghost data at {path}: {e}")
-
-    @staticmethod
-    def path_exists(path: Path) -> bool:
-        '''
-        ARCHITECTURE: Evalutes path existence while trapping stale network mount states
-        '''
-        try:
-            return path.exists()
-        except (OSError, PermissionError) as e:
+    def atomic_move(self, src: Path, dst: Path) -> None:
+        if self.check_mount_health(dst.parent) == MountState.OFFLINE:
+            raise StorageError(f"IMPORTING ABORTED: Destination mount {
+                               dst.parent} is OFFLINE.")
+        if not src.exists():
+            raise StorageError(f"SOURCE MISSING: {src}")
+        if dst.exists():
             logger.warning(
-                f"STORAGE WARNING: Path check blocked. Mount may be degraded: {e}")
-            return False
+                f"STORAGE WARNING: Overwriting existing destination: {dst}")
+            self.purge_dir(dst)
 
-    @staticmethod
-    def get_disk_telem(path: Path) -> dict[str, float | int]:
+        try:
+            src.rename(dst)
+            logger.info("STORAGE: Atomic rename successful: {src.name}")
+        except (OSError, PermissionError):
+            logger.warning(f"STORAGE WARNING: Atomic rename failed. Starting buffered copy: {
+                           src.name} -> {dst.name}")
+            self._buffered_copy(src, dst)
+
+    def _buffered_copy(self, src: Path, dst: Path) -> None:
         '''
-        ARCHITECTURE: Encapsulates shutil.disk_usage to ensure umounted/stale NAS paths
-        do not trigger an uncaught OSError during API health polls.
+        ARCHITECTURE: Moving from byte-copy to buffered copy
+        uses io_buffer_size from settings to mitigate NAS i/o wait
         '''
+        try:
+            if src.is_dir():
+                shutil.copytree(
+                    src, dst,
+                    dirs_exist_ok=True,
+                    copy_function=shutil.copy
+                )
+            else:
+                shutil.copy(src, dst)
+
+            if not dst.exists():
+                raise StorageError(
+                    "Copy verification failed: Destination does not exist.")
+
+            self.purge_dir(src) if src.is_dir() else src.unlink()
+
+        except Exception as e:
+            raise StorageError(f"BUFFERED COPY FATAL: {str(e)}")
+
+    def purge_dir(self, path: Path) -> None:
+        try:
+            if path.is_dir():
+                shutil.rmtree(path)
+            elif path.exists():
+                path.unlink()
+        except (OSError, PermissionError) as e:
+            logger.error(f"CLEANUP ERROR: Could not purge {path}: {e}")
+
+    class DiskTelemetry(TypedDict):
+        total_gb: int
+        used_gb: int
+        free_gb: int
+        percent: float
+        status: str
+
+    def get_disk_telem(self, path: Path) -> DiskTelemetry:
+        '''
+        ARCHITECTURE: Returns zero'd data if the mount is OFFLINE instead of crashing the API
+        '''
+        if self.check_mount_health(path) == MountState.OFFLINE:
+            return {"total_gb": 0, "used_gb": 0, "free_gb": 0, "percent": 0.0, "status": "offline"}
+
         try:
             total, used, free = shutil.disk_usage(str(path))
             return {
                 "total_gb": total // (2**30),
                 "used_gb": used // (2**30),
                 "free_gb": free // (2**30),
-                "percent": round((used / total) * 100, 1) if total > 0 else 0.0
+                "percent": round((used / total) * 100, 1) if total > 0 else 0.0,
+                "status": "online"
             }
-        except (OSError, PermissionError) as e:
-            logger.warning(
-                f"STORAGE WARNING: Telemetry drop for capacity on {path}: {e}")
-            return {"total_gb": 0, "used_gb": 0, "free_gb": 0, "percent": 0.0}
+        except (OSError, PermissionError):
+            return {
+                "total_gb": 0,
+                "used_gb": 0,
+                "free_gb": 0,
+                "percent": 0.0,
+                "status": "degraded"
+            }
 
-    @staticmethod
-    def atomic_move(src: Path, dst: Path) -> None:
-        ''' 
-        DESTRUCTIVE: Removed os.rename
-        TRADEOFF: Attempting native rename first for performance; falling back to byte-copy for saftey
-        ARCHITECTURE: Specifically ignores metadata errors during byte-copy to support limited NAS permission sets
-        '''
-        if not src.exists():
-            raise StorageError(f"STORAGE ERROR: Source path vanished: {src}")
-
-        if dst.exists():
-            logger.info(f"STORAGE: Destination {
-                        dst} exists. Preparing to overwrite.")
-            StorageManager.purge_dir(dst)
-
+    def is_populated(self, path: Path) -> bool:
         try:
-            src.rename(dst)
-            logger.info(f"STORAGE: Atomic move successful: {src.name}")
+            return path.is_dir() and any(path.iterdir())
+        except (OSError, PermissionError):
+            return False
 
-        except (OSError, PermissionError) as e:
-            #! ARCHITECTURE: Catching cross-device link or stale NFS handles
-            logger.warning(
-                f"STORAGE WARNING: Rename failed ({e}). Starting byte-copy to ({dst}).")
-            time.sleep(2)  # pray the NAS releases any lingering locks
-            try:
-                if src.is_dir():
-                    #! ARCHITECTURE: copytree with dirs_exist_ok and symlinks=False
-                    # to maximize compatibility with network shares
-                    shutil.copytree(str(src), str(
-                        dst), dirs_exist_ok=True, copy_function=shutil.copy, ignore_dangling_symlinks=True)
-                    logger.info(
-                        f"STORAGE: Byte-copy completed for directory: {src.name}")
-                    StorageManager.purge_dir(src)
-                else:
-                    #! ARCHITECTURE: dropping down to shutil.copy from copy2 to ignore metadata permission failures.
-                    # initially, transferring metadata was a priority, but this failed in my own homelab setup.
-                    shutil.copy(str(src), str(dst))
-                    logger.info(
-                        f"STORAGE: Byte-copy completed for file: {src.name}")
 
-                #! ARCHITETURE: If the bytes are on the NAS, the move is successful, even during failed cleanup
-                if StorageManager.is_populated(dst) if dst.is_dir() else dst.exists():
-                    try:
-                        if src.is_dir():
-                            StorageManager.purge_dir(src)
-                        else:
-                            src.unlink()
-                    except (OSError, PermissionError) as cleanup_err:
-                        logger.warning(
-                            f"STORAGE WARNING: Import succeeded but source cleanup failed: {cleanup_err}")
-                    return
-                else:
-                    raise StorageError(
-                        "Verification failed: Destination is empty after copy.")
-
-            except shutil.Error as se:
-                err_details = "; ".join([f"Source: {s}, Dest: {d}, Reason: {
-                                        e}" for s, d, e in se.args[0]])
-                if StorageManager.is_populated(dst) if dst.is_dir() else dst.exists():
-                    logger.warning(
-                        f"STORAGE WARNING: shutil reported errors, but verification passed: {err_details}")
-                    return
-                raise StorageError(
-                    f"STORAGE FATAL: Multi-file copy failure: {err_details}")
-            except (OSError, PermissionError, IOError) as fallback_err:
-                raise StorageError(
-                    f"STORAGE FATAL: Byte-copy transmission failed: {str(fallback_err)}")
-            except Exception as critical_err:
-                raise StorageError(
-                    f"STORAGE CRITICAL: Unexpected I/O collapse: {str(critical_err)}")
+mount_manager = MountManager()

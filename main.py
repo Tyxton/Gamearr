@@ -13,7 +13,7 @@ from backend.models import GameModel, QueuePayload, BulkActionPayload
 from backend.auth import validate_api_key
 from backend.logger import logger, LOG_FILE
 from backend.config import settings
-from backend.storage import StorageManager
+from backend.storage import mount_manager
 
 
 @asynccontextmanager
@@ -30,8 +30,8 @@ async def lifespan(app: FastAPI):
     await asyncio.to_thread(database.revert_stuck_queue)
 
     def _provision_directories():
-        StorageManager.ensure_dir(settings.library_dir)
-        StorageManager.ensure_dir(settings.incomplete_dir)
+        mount_manager.ensure_dir(settings.library_dir)
+        mount_manager.ensure_dir(settings.incomplete_dir)
 
     await asyncio.to_thread(_provision_directories)
     await asyncio.to_thread(database.get_or_generate_api_key)
@@ -345,10 +345,8 @@ async def trigger_update_all(background_tasks: BackgroundTasks):
 @api_router.get("/system/health")
 async def get_system_health():
     def _health():
-        #! ARCHITECTURE: Delegated telemetry fetching entirely to StorageManager mapping
-        # protecting endpoint from uptrapped OS layer groupouts.
         return {
-            "disk": StorageManager.get_disk_telem(settings.library_dir)
+            "disk": mount_manager.get_disk_telem(settings.library_dir)
         }
     return await asyncio.to_thread(_health)
 

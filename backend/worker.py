@@ -5,7 +5,7 @@ from backend import database, downloader, extractor
 from backend.models import GameStatus
 from backend.logger import logger
 from backend.config import settings
-from backend.storage import StorageManager
+from backend.storage import mount_manager
 from backend.scout import scout_title
 from backend.exceptions import StorageError
 
@@ -56,9 +56,7 @@ def start_worker():
                     logger.info(f"IMPORT: Starting physical transfer of {
                                 title_id} to library...")
                     try:
-                        #! ARCHITECTURE: Utilizing StorageManager for atomic operations across shares
-                        #! DESTRUCTIVE: This breaks the previous shutil.move
-                        StorageManager.atomic_move(
+                        mount_manager.atomic_move(
                             source_folder, final_destination)
                         logger.info(
                             f"IMPORT: {name} successfully commited to library.")
