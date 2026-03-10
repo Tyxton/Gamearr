@@ -1,8 +1,9 @@
 from pathlib import Path
 import threading
+import time
 
 from backend import database, downloader, extractor
-from backend.models import GameStatus
+from backend.models import GameStatus, MountState
 from backend.logger import logger
 from backend.config import settings
 from backend.storage import mount_manager
@@ -13,8 +14,6 @@ shutdown_event = threading.Event()
 
 
 def start_worker():
-    #! ARCHITECTURE: This loop is designed to be called via asyncio.to_thread.
-    # it consumes the SQLite queue sequentially to prevent file lock contention.
     logger.info("Worker standby... waiting for Database initialization.")
 
     while not shutdown_event.is_set():
@@ -55,29 +54,62 @@ def start_worker():
                     final_destination: Path = settings.library_dir / safe_folder
                     logger.info(f"IMPORT: Starting physical transfer of {
                                 title_id} to library...")
-                    try:
-                        mount_manager.atomic_move(
-                            source_folder, final_destination)
-                        logger.info(
-                            f"IMPORT: {name} successfully commited to library.")
 
-                        database.update_queue_status(
-                            title_id, GameStatus.COMPLETED)
-                        scout_title(title_id, name)
-                    except Exception as e:
-                        #! DEBT: byte-copy transfer failed, capure specific error message
-                        logger.error(f"Import Failed: {e}")
-                        database.update_queue_error(title_id, str(e))
-                        database.update_queue_status(
-                            title_id, GameStatus.FAILED)
-                else:
-                    logger.error(f"Extraction Failed: {name}")
-                    database.update_queue_status(title_id, GameStatus.FAILED)
+                    max_retries = 5
+                    attempts = 0
+
+                    while attempts < max_retries:
+                        if shutdown_event.is_set():
+                            break
+
+                        try:
+                            mount_manager.atomic_move(
+                                source_folder, final_destination)
+                            logger.info(
+                                f"IMPORT: {name} successfully commited to library.")
+
+                            database.update_queue_status(
+                                title_id, GameStatus.COMPLETED)
+                            scout_title(title_id, name)
+
+                        except StorageError as e:
+                            attempts += 1
+                            err_msg = str(e)
+
+                            #! ARCHITECTURE: check if the error is a transient
+                            # network issue or a fatal logic error
+
+                            is_transient = any(x in err_msg.upper() for x in [
+                                               "TIMEOUT", "OFFLINE", "VANISHED", "HOST"])
+
+                            if is_transient and attempts < max_retries:
+                                logger.warning(f"IMPORT STALLED: {
+                                               name} - {err_msg}. Waiting for mount recovery (Attempt {attempts}/{max_retries})")
+                                database.update_queue_status(
+                                    title_id, GameStatus.STALLED)
+                                database.update_queue_error(
+                                    title_id, f"Transient I/O Fault: {err_msg}")
+
+                                wait_limit = 20
+                                waited = 0
+                                while waited < wait_limit:
+                                    if shutdown_event.is_set() or mount_manager.check_mount_health(settings.library_dir) == MountState.ONLINE:
+                                        break
+                                    time.sleep(30)
+                                    waited += 1
+
+                                continue
+                            else:
+                                #! ARCHITECTURE: Hard failure on max retries or fatal error (disk full/permissions)
+                                logger.error(f"IMPORT FATAL: {name} failed aftrer {
+                                             attempts} attempts. Error: {err_msg}")
+                                database.update_queue_status(
+                                    title_id, GameStatus.FAILED)
+                                database.update_queue_error(title_id, err_msg)
+                                break
         except Exception as e:
-            #! ARCHITECTURE: The worker is a daemonized background loop.
-            # it must trap broad exceptions at the highest level to survive unforseen drops
-            # (e.g. SQLite lock timeouts) without exiting the thread permanently
-            logger.error(f"Worker Error: {e}")
+            logger.error(f"WORKER CRITICAL: Unexpected thread collapse: {e}")
+            time.sleep(10)
 
 
 if __name__ == "__main__":
