@@ -158,6 +158,30 @@ class MountManager:
                 else:
                     self._update_state(path, MountState.ONLINE)
 
+    def preflight_test(self) -> None:
+        '''
+        ARCHITECTURE: Validates the entire i/o pipeline before accepting new tasks.
+        '''
+        incomplete_state = self.check_mount_health(settings.incomplete_dir)
+        if incomplete_state == MountState.OFFLINE:
+            raise StorageError(
+                "Download directory is OFFLINE. Check NAS connectivity. Aborting...")
+        if incomplete_state == MountState.DEGRADED:
+            raise StorageError(
+                "Download directory is READ-ONLY. Check NAS/LXC/Docker permissions. Aborting...")
+
+        library_state = self.check_mount_health(settings.library_dir)
+        if library_state == MountState.OFFLINE:
+            raise StorageError(
+                "Library directory is OFFLINE. Check NAS connectivity. Aborting...")
+        if library_state == MountState.DEGRADED:
+            raise StorageError(
+                "Library directory is READ-ONLY. Check destination privileges. Aborting...")
+
+        if not self.is_writable(settings.incomplete_dir):
+            raise StorageError(
+                "Pre-flight write test failed on download buffer. Aborting...")
+
     class DiskTelemetry(TypedDict):
         total_gb: int
         used_gb: int

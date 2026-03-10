@@ -5,10 +5,11 @@ import pandas as pd
 import numpy as np
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, HTTPException, Body, BackgroundTasks, Depends, APIRouter
+from fastapi import FastAPI, HTTPException, Body, BackgroundTasks, Depends, APIRouter, status
 from fastapi.staticfiles import StaticFiles
 
 from backend import parser, database, metadata, scout
+from backend.exceptions import StorageError
 from backend.models import GameModel, QueuePayload, BulkActionPayload
 from backend.auth import validate_api_key
 from backend.logger import logger, LOG_FILE
@@ -202,20 +203,36 @@ async def get_game_details(title_id: str, name: str):
 
 @api_router.post("/queue")
 async def queue_endpoint(game: QueuePayload):
-    #! ARCHITECTURE: Closure wrapper forces avaluation of Pydantic string properties inside the executor,
-    # completely circumventing TypeError injection bugs inside `asyncio.to_thread` parsing
-    def _add():
-        return database.add_to_queue(
-            game.platform,
-            game.title_id,
-            game.region,
-            game.name,
-            game.pkg_url,
-            game.license_key
-        )
+    '''
+    ARCHITECTURE: Pre-flight test must succeed to add games to queue
+    503 Service Unavailable = Mount point is mising or offline
+    403 Forbidden = Mount point is degraded/RO
+    '''
+    def _preflight_add():
+        try:
+            mount_manager.preflight_test()
 
-    success = await asyncio.to_thread(_add)
-    return {"message": "Success"} if success else {"error": "Failed"}
+            return database.add_to_queue(
+                game.platform,
+                game.title_id,
+                game.region,
+                game.name,
+                game.pkg_url,
+                game.license_key
+            )
+        except StorageError as se:
+            if "OFFLINE" in str(se):
+                raise HTTPException(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail=str(se)
+                )
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=str(se)
+            )
+
+    success = await asyncio.to_thread(_preflight_add)
+    return {"message": "Success"} if success else {"error": "Failed to add to queue"}
 
 
 @api_router.get("/queue")
