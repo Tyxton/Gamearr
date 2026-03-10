@@ -1,4 +1,5 @@
 import time
+import errno
 import shutil
 from pathlib import Path
 from typing import TypedDict
@@ -75,47 +76,89 @@ class MountManager:
                 pass
 
     def atomic_move(self, src: Path, dst: Path) -> None:
+        '''
+        REFACTOR: Update the MountState during a failure
+        '''
         if self.check_mount_health(dst.parent) == MountState.OFFLINE:
-            raise StorageError(f"IMPORTING ABORTED: Destination mount {
+            raise StorageError(f"IMPORT ABORTED: Mount {
                                dst.parent} is OFFLINE.")
-        if not src.exists():
-            raise StorageError(f"SOURCE MISSING: {src}")
-        if dst.exists():
-            logger.warning(
-                f"STORAGE WARNING: Overwriting existing destination: {dst}")
-            self.purge_dir(dst)
 
         try:
             src.rename(dst)
-            logger.info("STORAGE: Atomic rename successful: {src.name}")
+            logger.info(f"STORAGE: Atomic rename successful for {src.name}")
         except (OSError, PermissionError):
-            logger.warning(f"STORAGE WARNING: Atomic rename failed. Starting buffered copy: {
-                           src.name} -> {dst.name}")
+            logger.warning(
+                f"STORAGE: Falling back to buffered stream for {src.name}")
+
             self._buffered_copy(src, dst)
+
+    def _stream_file(self, src: Path, dst: Path) -> None:
+        '''
+        ARCHITECTURE: Transitioning to shutil.copyfileobj for files, this dodges the
+        aggressive system calls for metadata/permissions preservations.
+        Ultimately, reducing the i/o wait of the network share.
+        '''
+        try:
+            with src.open('rb') as fsrc:
+                with dst.open('wb') as fdst:
+                    shutil.copyfileobj(
+                        fsrc, fdst, length=settings.io_buffer_size)
+
+            self._apply_identity_mapping(dst)
+        except PermissionError:
+            self._update_state(dst.parent, MountState.DEGRADED)
+            raise StorageError(f"PERMISSION DENIED: Cannot write to {
+                               dst.name}. Check target_uid settings.")
+
+        except OSError as e:
+            if e.errno == errno.ENOSPC:
+                raise StorageError(
+                    f"DISK FULL: No space remaining on {dst.parent}")
+            if e.errno in (errno.ETIMEDOUT, errno.EHOSTUNREACH, errno.ENETUNREACH):
+                self._update_state(dst.parent, MountState.OFFLINE)
+                raise StorageError(
+                    f"NETWORK TIMEOUT: NAS connection lost during stream of {src.name}")
+
+            raise StorageError(f"I/O FAULT (errno {e.errno}): {e.strerror}")
 
     def _buffered_copy(self, src: Path, dst: Path) -> None:
         '''
-        ARCHITECTURE: Moving from byte-copy to buffered copy
-        uses io_buffer_size from settings to mitigate NAS i/o wait
+        ARCHITECTURE: Seperating the transfer of directories and files to reduce i/o wait
         '''
         try:
             if src.is_dir():
-                shutil.copytree(
-                    src, dst,
-                    dirs_exist_ok=True,
-                    copy_function=shutil.copy
-                )
+                self.ensure_dir(dst)
+
+            for item in src.iterdir():
+                target = dst / item.name
+                if item.is_dir():
+                    self._buffered_copy(item, target)
+                else:
+                    self._stream_file(item, target)
+
             else:
-                shutil.copy(src, dst)
+                self._stream_file(src, dst)
 
-            if not dst.exists():
-                raise StorageError(
-                    "Copy verification failed: Destination does not exist.")
+            if src.exists() and dst.exists():
+                try:
+                    if src.stat().st_size != dst.stat().st_size:
+                        raise StorageError(
+                            f"VERIFICATION FAILED: Size mismatch for {src.name}")
+                except OSError:
+                    self._update_state(dst.parent, MountState.OFFLINE)
+                    raise StorageError(
+                        "VERIFICATION FAILED: Mount vanished during integrity check.")
 
-            self.purge_dir(src) if src.is_dir() else src.unlink()
+            self.purge_dir(src)
 
-        except Exception as e:
-            raise StorageError(f"BUFFERED COPY FATAL: {str(e)}")
+        except shutil.Error as se:
+            logger.warning(
+                f"STORAGE WARNING: Metadata copy failed, but bytes were transfered: {se}")
+
+        except (StorageError, OSError) as e:
+            if dst.exists():
+                self.purge_dir(dst)
+            raise e
 
     def purge_dir(self, path: Path) -> None:
         try:
