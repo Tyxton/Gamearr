@@ -20,13 +20,11 @@ from backend.storage import mount_manager
 async def lifespan(app: FastAPI):
     logger.info("--- Gamearr Startup ---")
 
-    #! ARCHITECTURE: Database init wrapped to preven main thread event looping
     initialized = await asyncio.to_thread(database.init_db)
     if not initialized:
         logger.error("CRITICAL: Database initialization failed.")
         return
 
-    #! ARCHITECTURE: Self-healing queue recovery for non-graceful container exits (SIGKILL/Power Loss).
     await asyncio.to_thread(database.revert_stuck_queue)
 
     def _provision_directories():
@@ -36,21 +34,28 @@ async def lifespan(app: FastAPI):
     await asyncio.to_thread(_provision_directories)
     await asyncio.to_thread(database.get_or_generate_api_key)
 
-    #! ARCHITECTURE: sequenced start to prevent SQLite lock contention during TSV injestion
-    # Woker and Scout are delayed until the primary datasync finishes.
     async def _delayed_start():
         await asyncio.to_thread(parser.sync_database)
-        #! ARCHITECTURE: Immediate scout trigger post-sync to clear any ghost entries on boot
         await asyncio.to_thread(scout.run_library_sync)
 
         logger.info("Background services initializing...")
-        global worker_task, scout_task
+        global worker_task, scout_task, heartbeat_task
+        heartbeat_task = asyncio.create_task(run_async_heartbeat())
         worker_task = asyncio.create_task(run_async_worker())
         scout_task = asyncio.create_task(run_async_scout())
 
     asyncio.create_task(_delayed_start())
 
     yield
+
+
+async def run_async_heartbeat():
+    '''
+    ARCHITECTURE: Background monitor polls the mount state every 60s
+    '''
+    while True:
+        await asyncio.to_thread(mount_manager.heartbeat_mon)
+        await asyncio.sleep(60)
 
 
 async def run_async_worker():
@@ -61,8 +66,6 @@ async def run_async_worker():
 
 
 async def run_async_scout():
-    #! ARCHITECTURE: pointing the 5min loop to the library
-    # sync ensures periodic phyical data resolution.
     from backend.scout import run_library_sync
     while True:
         await asyncio.to_thread(run_library_sync)
@@ -115,7 +118,6 @@ async def get_library():
         df = pd.read_sql_query(sql, conn)
         conn.close()
 
-        #! CRUCIAL: JSON None needed to avoid crash
         df = df.astype(object).replace({np.nan: None})
         records = df.to_dict(orient='records')
 
@@ -137,15 +139,11 @@ async def get_library():
             ))
         return {"results": library_results}
 
-    #! ARCHITECURE: isolate sequential SQL query to prevent the web server from freezing
-    # before this would go straight into the Uvicorn request loop.
     return await asyncio.to_thread(_fetch)
 
 
 @api_router.get("/search")
 async def search_games(q: str):
-    #! ARCHITECTURE: Unified scope closure wrapping for to_thread isolates
-    # arguements preventing destructuring collisions inside run_in_executor.
     def _search():
         return database.search_game_db(q)
 
@@ -344,11 +342,32 @@ async def trigger_update_all(background_tasks: BackgroundTasks):
 
 @api_router.get("/system/health")
 async def get_system_health():
+    '''
+    ARCHITECTURE: making this state aware so we get the current mount status
+    '''
     def _health():
         return {
-            "disk": mount_manager.get_disk_telem(settings.library_dir)
+            "library": mount_manager.get_disk_telem(settings.library_dir),
+            "incomplete": mount_manager.get_disk_telem(settings.incomplete_dir),
+
+            "states": {
+                "library": mount_manager.check_mount_health(settings.library_dir),
+                "incomplete": mount_manager.check_mount_health(settings.incomplete_dir)
+            }
         }
     return await asyncio.to_thread(_health)
+
+
+@api_router.post("/system/health/refresh")
+async def trigger_mount_refresh():
+    '''
+    ARCHITECTURE: Allows refreshing rather than a strict 60s poll
+    '''
+    #! DEBUG:
+    logger.info("SYSTEM: Manual hardware health refresh triggered by UI.")
+    await asyncio.to_thread(mount_manager.heartbeat_mon)
+
+    return {"message": "Hardware status updated.", "status": "success"}
 
 
 @api_router.get("/system/status")

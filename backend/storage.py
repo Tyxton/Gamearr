@@ -1,7 +1,7 @@
 import time
 import shutil
 from pathlib import Path
-from typing import TypedDict, Union
+from typing import TypedDict
 
 from backend.logger import logger
 from backend.exceptions import StorageError
@@ -126,6 +126,38 @@ class MountManager:
         except (OSError, PermissionError) as e:
             logger.error(f"CLEANUP ERROR: Could not purge {path}: {e}")
 
+    def is_writable(self, path: Path) -> bool:
+        '''
+        ARCHITECTURE: Can tell the difference between a stale mount and a RO permission error.
+        '''
+        heartbeat_file = path / ".gamearr_heartbeat"
+        try:
+            path.mkdir(parents=True, exist_ok=True)
+
+            heartbeat_file.write_text("1")
+            heartbeat_file.unlink()
+            return True
+        except (OSError, PermissionError) as e:
+            logger.warning(f"STORAGE: Failed write text on {path}: {e}")
+            return False
+
+    def heartbeat_mon(self):
+        '''
+        ARCHITECTURE: Periodic health sweep for all configured hardware paths
+        '''
+        targets = {
+            "Library": settings.library_dir,
+            "Incomplete": settings.incomplete_dir
+        }
+
+        for name, path in targets.items():
+            stat_test = self.check_mount_health(path)
+            if stat_test == MountState.ONLINE:
+                if not self.is_writable(path):
+                    self._update_state(path, MountState.DEGRADED)
+                else:
+                    self._update_state(path, MountState.ONLINE)
+
     class DiskTelemetry(TypedDict):
         total_gb: int
         used_gb: int
@@ -137,8 +169,10 @@ class MountManager:
         '''
         ARCHITECTURE: Returns zero'd data if the mount is OFFLINE instead of crashing the API
         '''
+        state = self.check_mount_health(path)
+
         if self.check_mount_health(path) == MountState.OFFLINE:
-            return {"total_gb": 0, "used_gb": 0, "free_gb": 0, "percent": 0.0, "status": "offline"}
+            return {"total_gb": 0, "used_gb": 0, "free_gb": 0, "percent": 0.0, "status": state.value}
 
         try:
             total, used, free = shutil.disk_usage(str(path))
@@ -147,7 +181,7 @@ class MountManager:
                 "used_gb": used // (2**30),
                 "free_gb": free // (2**30),
                 "percent": round((used / total) * 100, 1) if total > 0 else 0.0,
-                "status": "online"
+                "status": state.value
             }
         except (OSError, PermissionError):
             return {
@@ -155,7 +189,7 @@ class MountManager:
                 "used_gb": 0,
                 "free_gb": 0,
                 "percent": 0.0,
-                "status": "degraded"
+                "status": MountState.OFFLINE.value
             }
 
     def is_populated(self, path: Path) -> bool:
