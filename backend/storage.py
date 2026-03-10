@@ -67,17 +67,35 @@ class MountManager:
     def _apply_identity_mapping(self, path: Path):
         '''
         ARCHITECTURE: Enforce UID/GID for LXC/NAS compatibility.
+        * if target_uid/gid = None: skip
+        * If filestytem is FAT32/exFAT: trap PermissionError
+        * If path is directory, apply recursively
         '''
         uid = settings.target_uid
         gid = settings.target_gid
 
         if uid is not None and gid is not None:
-            try:
-                shutil.chown(str(path), user=uid, group=gid)
-            except (OSError, PermissionError) as e:
-                logger.warning("STORAGE WARNING: Could not set ownership on {path} "
-                               f"Error: {e}. (Common on non-POSIX filesystems or unpriviledged LXCs)")
-                pass
+            return
+
+        try:
+            if path.is_dir():
+                for item in path.rglob('*'):
+                    self._chown_path(item, uid, gid)
+
+            self._chown_path(path, uid, gid)
+
+        except (OSError, PermissionError) as e:
+            logger.warning(f"IDENTITY: Ownership mapping bypassed for {
+                           path.name}: {e}")
+
+    def _chown_path(self, path: Path, uid: int | None, gid: int | None) -> None:
+        try:
+            tuid = uid if uid is not None else -1
+            tgid = gid if gid is not None else -1
+
+            shutil.chown(str(path), user=tuid, group=tgid)
+        except (OSError, PermissionError):
+            pass
 
     def atomic_move(self, src: Path, dst: Path) -> None:
         '''
@@ -89,7 +107,9 @@ class MountManager:
 
         try:
             src.rename(dst)
-            logger.info(f"STORAGE: Atomic rename successful for {src.name}")
+            self._apply_identity_mapping(dst)
+            logger.info(
+                f"STORAGE: Atomic rename and identity mapping successful for {src.name}")
         except (OSError, PermissionError):
             logger.warning(
                 f"STORAGE: Falling back to buffered stream for {src.name}")
@@ -167,7 +187,8 @@ class MountManager:
                                        dst.name} is empty.")
 
             logger.info(
-                f"STORAGE: Verication passed. Commiting move for {src.name}.")
+                f"STORAGE: Verication passed. Commiting move and mapping for {src.name}.")
+            self._apply_identity_mapping(dst)
             self.purge_dir(src)
         except shutil.Error as se:
             logger.warning(
