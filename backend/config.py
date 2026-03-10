@@ -39,6 +39,10 @@ class Settings(BaseSettings):
     target_uid: int | None = Field(default=None, validation_alias="TARGET_UID")
     target_gid: int | None = Field(default=None, validation_alias="TARGET_GID")
 
+    #! ARCHITECTURE: throttle concurrency to prevent multiple streams from saturating NAS disk heads
+    max_concurent_io: int = Field(
+        default=1, validation_alias="MAX_CONCURRENT_IO")
+
     class Config:
         env_file = ".env"
         extra = "ignore"

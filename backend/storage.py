@@ -1,6 +1,7 @@
 import time
 import errno
 import shutil
+import threading
 from pathlib import Path
 from typing import TypedDict
 
@@ -11,14 +12,16 @@ from backend.config import settings
 
 
 class MountManager:
-    ''' 
+    '''
     ARCHITECTURE: Replaces the passive StorageManager with active hardware awareness.
-    All static methods are removed to enforce service level state tracking. 
+    All static methods are removed to enforce service level state tracking.
     '''
 
     def __init__(self):
         self._mount_cache: dict[str, MountState] = {}
         self._failure_timestamps: dict[str, float] = {}
+        self._io_lock = threading.BoundedSemaphore(settings.max_concurent_io)
+        #! ARCHITECTURE: Limits concurrent heavy-write operations across the entire app
 
     def _update_state(self, path: Path, state: MountState):
         path_str = str(path.resolve())
@@ -98,28 +101,34 @@ class MountManager:
         aggressive system calls for metadata/permissions preservations.
         Ultimately, reducing the i/o wait of the network share.
         '''
-        try:
-            with src.open('rb') as fsrc:
-                with dst.open('wb') as fdst:
-                    shutil.copyfileobj(
-                        fsrc, fdst, length=settings.io_buffer_size)
+        with self._io_lock:
+            logger.debug(f"IO_LOCK: Aquired token for {src.name}")
+            try:
+                with src.open('rb') as fsrc:
+                    with dst.open('wb') as fdst:
+                        shutil.copyfileobj(
+                            fsrc, fdst, length=settings.io_buffer_size)
 
-            self._apply_identity_mapping(dst)
-        except PermissionError:
-            self._update_state(dst.parent, MountState.DEGRADED)
-            raise StorageError(f"PERMISSION DENIED: Cannot write to {
-                               dst.name}. Check target_uid settings.")
+                self._apply_identity_mapping(dst)
+            except PermissionError:
+                self._update_state(dst.parent, MountState.DEGRADED)
+                raise StorageError(f"PERMISSION DENIED: Cannot write to {
+                    dst.name}. Check target_uid settings.")
 
-        except OSError as e:
-            if e.errno == errno.ENOSPC:
+            except OSError as e:
+                if e.errno == errno.ENOSPC:
+                    raise StorageError(
+                        f"DISK FULL: No space remaining on {dst.parent}")
+                if e.errno in (errno.ETIMEDOUT, errno.EHOSTUNREACH, errno.ENETUNREACH):
+                    self._update_state(dst.parent, MountState.OFFLINE)
+                    raise StorageError(
+                        f"NETWORK TIMEOUT: NAS connection lost during stream of {src.name}")
+
                 raise StorageError(
-                    f"DISK FULL: No space remaining on {dst.parent}")
-            if e.errno in (errno.ETIMEDOUT, errno.EHOSTUNREACH, errno.ENETUNREACH):
-                self._update_state(dst.parent, MountState.OFFLINE)
-                raise StorageError(
-                    f"NETWORK TIMEOUT: NAS connection lost during stream of {src.name}")
+                    f"I/O FAULT (errno {e.errno}): {e.strerror}")
 
-            raise StorageError(f"I/O FAULT (errno {e.errno}): {e.strerror}")
+            finally:
+                logger.debug(f"IO_LOCK: Released token for {src.name}")
 
     def _buffered_copy(self, src: Path, dst: Path) -> None:
         '''
