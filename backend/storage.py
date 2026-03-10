@@ -9,6 +9,7 @@ from backend.logger import logger
 from backend.exceptions import StorageError
 from backend.models import MountState
 from backend.config import settings
+from backend.integrity import integrity_manager
 
 
 class MountManager:
@@ -117,6 +118,8 @@ class MountManager:
 
             except OSError as e:
                 if e.errno == errno.ENOSPC:
+                    if dst.exists():
+                        dst.unlink()
                     raise StorageError(
                         f"DISK FULL: No space remaining on {dst.parent}")
                 if e.errno in (errno.ETIMEDOUT, errno.EHOSTUNREACH, errno.ENETUNREACH):
@@ -133,40 +136,44 @@ class MountManager:
     def _buffered_copy(self, src: Path, dst: Path) -> None:
         '''
         ARCHITECTURE: Seperating the transfer of directories and files to reduce i/o wait
+        REFACTOR: Verify the transaction for slower or unstable network environements (like FTP)
         '''
         try:
             if src.is_dir():
                 self.ensure_dir(dst)
 
-            for item in src.iterdir():
-                target = dst / item.name
-                if item.is_dir():
-                    self._buffered_copy(item, target)
-                else:
-                    self._stream_file(item, target)
+                for item in src.iterdir():
+                    target = dst / item.name
+                    if item.is_dir():
+                        self._buffered_copy(item, target)
+                    else:
+                        self._stream_file(item, target)
 
             else:
                 self._stream_file(src, dst)
 
-            if src.exists() and dst.exists():
-                try:
-                    if src.stat().st_size != dst.stat().st_size:
-                        raise StorageError(
-                            f"VERIFICATION FAILED: Size mismatch for {src.name}")
-                except OSError:
-                    self._update_state(dst.parent, MountState.OFFLINE)
-                    raise StorageError(
-                        "VERIFICATION FAILED: Mount vanished during integrity check.")
+            logger.info(
+                f"STORAGE: Verifying transmission integrity for {dst.name}...")
 
+            if src.is_file():
+                source_size = src.stat().st_size
+                if not integrity_manager.verify_file_integrity(dst, source_size):
+                    raise StorageError(f"TRANSMISSION ERROR: Size mismatch on destination for {src.name}. "
+                                       "Source preserved for retry.")
+
+            elif src.is_dir():
+                if not mount_manager.is_populated(dst):
+                    raise StorageError(f"TRANSMISSION ERROR: Destination folder {
+                                       dst.name} is empty.")
+
+            logger.info(
+                f"STORAGE: Verication passed. Commiting move for {src.name}.")
             self.purge_dir(src)
-
         except shutil.Error as se:
             logger.warning(
                 f"STORAGE WARNING: Metadata copy failed, but bytes were transfered: {se}")
 
         except (StorageError, OSError) as e:
-            if dst.exists():
-                self.purge_dir(dst)
             raise e
 
     def purge_dir(self, path: Path) -> None:
