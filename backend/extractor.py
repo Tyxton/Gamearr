@@ -1,5 +1,6 @@
 import subprocess
 import os
+import zipfile
 from pathlib import Path
 
 from backend.logger import logger
@@ -49,10 +50,29 @@ def extract_pkg(pkg_path: Path, license_key: str, platform: str) -> bool:
             capture_output=True,
             text=True
         )
+
+        if platform.lower() in ['psx', 'psp']:
+            zip_files = list(work_dir.glob("*.zip"))
+            if not zip_files:
+                logger.error(
+                    "EXTRACTION ERROR: pkg2zip succeeded but no ZIP archive was found.")
+                return False
+
+            for z_file in zip_files:
+                logger.info(
+                    f"EXTRACTION: Unpacking PSX/PSP archive: {z_file.name}")
+                with zipfile.ZipFile(z_file, 'r') as zip_ref:
+                    zip_ref.extractall(work_dir)
+
+                z_file.unlink()
+
         logger.info(f"Extraction block finalized in {work_dir}")
         return True
     except subprocess.CalledProcessError as e:
         logger.error(f"EXTRACTION ERROR: Subprocess trace failed: {e}")
+        return False
+    except zipfile.BadZipFile:
+        logger.error("EXRACTION ERROR: Created ZIP archive is corrupt.")
         return False
     except FileNotFoundError:
         logger.error(

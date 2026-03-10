@@ -1,9 +1,9 @@
 import re
 
 from backend import database, metadata
-from backend.models import GameStatus
-from backend.logger import logger
+from backend.models import GameStatus, MountState
 from backend.config import settings
+from backend.logger import logger
 
 
 def run_meta_scout(single_id=None):
@@ -13,7 +13,6 @@ def run_meta_scout(single_id=None):
     if single_id:
         target_ids.append(single_id.upper())
     else:
-        #! DESTRUCTIVE: os module removed. iterdir() protects against symlink loops natively.
         if settings.library_dir.exists():
             for folder in settings.library_dir.iterdir():
                 if folder.is_dir():
@@ -77,13 +76,15 @@ def scout_title(title_id, name):
 def run_library_sync():
     import sqlite3
     from backend.downloader import get_safe_name
-    from backend.storage import StorageManager
+    from backend.storage import mount_manager
+
+    if mount_manager.check_mount_health(settings.library_dir) != MountState.ONLINE:
+        logger.warning(
+            "SCOUT: Library mount is not ONLINE. Skipping ghost purge to prevent accidental data loss.")
 
     conn = database.get_db_connection()
     conn.row_factory = sqlite3.Row
 
-    #! ARCHITECTURE: Disk reality enforcement. Cleans up DB orphans if user manually deleted folder from disk
-    # Cleans the ghost library issue without requiring a db wipe
     try:
         completed_items = conn.execute(
             "SELECT title_id, name FROM queue WHERE status = 'completed'").fetchall()
@@ -93,7 +94,7 @@ def run_library_sync():
             safe_folder = get_safe_name(item['name'], item['title_id'])
             safe_path = settings.library_dir / safe_folder
 
-            if not StorageManager.path_exists(safe_path):
+            if not safe_path.exists():
                 logger.warning(f"SCOUT: {item['name']} [{
                                item['title_id']}] missing from disk. Purging from database.")
                 orphans.append((item['title_id'],))

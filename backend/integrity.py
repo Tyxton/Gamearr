@@ -3,7 +3,6 @@ from pathlib import Path
 from backend.logger import logger
 from backend.config import settings
 from backend.models import MountState
-from backend.storage import mount_manager
 
 
 class IntegrityManager:
@@ -18,6 +17,7 @@ class IntegrityManager:
         self._abort_requested = False
 
     def verify_file_integrity(self, file_path: Path, expected_size: int) -> bool:
+        from backend.storage import mount_manager
         if mount_manager.check_mount_health(file_path.parent) == MountState.OFFLINE:
             logger.error(f"INTEGRITY ERROR: Cannot verify {
                          file_path.name} - Mount is OFFLINE.")
@@ -102,12 +102,14 @@ class IntegrityManager:
         for item in required:
             #! ARCHITECTURE: pkg2zip/NPS structures can be deeply nested like: /app/PCSB0001/...
             # using rglob here to verify the files exist if they are anywhere in the decrypted folder
-            found = any(f.parts[-1].lower() == item.split('/')[-1].lower()
-                        for f in folder_path.rglob('*'))
-            #! unless if it's a PS Vita game, param.sfo must be in a sce_sys subfolder
-            if "sce_sys" in item:
-                found = any("sce_sys" in str(f).lower() and "param.sfo" in f.name.lower()
-                            for f in folder_path.rglob('*.sfo'))
+            found = False
+            for file in folder_path.rglob('*'):
+                if file.name.lower() == item.lower():
+                    #! unless if it's a PS Vita game, param.sfo must be in a sce_sys subfolder
+                    if "param.sfo" in item.lower() and "sce_sys" not in str(file.parent).lower():
+                        continue
+                found = True
+                break
 
             if not found:
                 logger.error(f"INTEGRITY ERROR: {platform.upper()} verification failed. "

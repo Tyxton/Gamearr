@@ -8,3 +8,4 @@ downloads/
 library/
 *.log
 docker-compose.override.yml
+docker-compose.yml

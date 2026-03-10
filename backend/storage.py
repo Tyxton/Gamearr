@@ -33,20 +33,24 @@ class MountManager:
 
     def check_mount_health(self, path: Path) -> MountState:
         '''
-        ARCHITECTURE: Performs a non-destructive STAT check, if the mount is stale or
-        unresponsive, it updates the stat map.
+        ARCHITECTURE: Walks up the directory tree to find the nearest
+        existing ancestor, if any parent exists the filesystem is considered ONLINE.
         '''
-        path_str = str(path.resolve())
         try:
-            if path.exists():
-                self._update_state(path, MountState.ONLINE)
-                return MountState.ONLINE
-            else:
-                self._update_state(path, MountState.OFFLINE)
-                return MountState.OFFLINE
-        except (OSError, PermissionError):
+            check_path = path
+            while not check_path.exists():
+                if check_path == check_path.parent:
+                    self._update_state(path, MountState.OFFLINE)
+                    return MountState.OFFLINE
+                check_path = check_path.parent
+
+            self._update_state(check_path, MountState.ONLINE)
+            return MountState.ONLINE
+
+        except (OSError, PermissionError) as e:
+            logger.error(
+                f"STORAGE ERROR: Critical I/O fault checking {path}: {e}")
             self._update_state(path, MountState.OFFLINE)
-            self._failure_timestamps[path_str] = time.time()
             return MountState.OFFLINE
 
     def ensure_dir(self, path: Path) -> None:
@@ -147,8 +151,8 @@ class MountManager:
                                     os.fsync(fdst.fileno())
                                     bytes_since_sync = 0
 
-                fdst.flush()
-                os.fsync(fdst.fileno())
+                        fdst.flush()
+                        os.fsync(fdst.fileno())
 
                 self._apply_identity_mapping(dst)
             except PermissionError:
@@ -173,48 +177,55 @@ class MountManager:
             finally:
                 logger.debug(f"IO_LOCK: Released token for {src.name}")
 
-    def _buffered_copy(self, src: Path, dst: Path) -> None:
+    def _buffered_copy(self, src: Path, dst: Path, is_recursive: bool = False) -> None:
         '''
         ARCHITECTURE: Seperating the transfer of directories and files to reduce i/o wait
         REFACTOR: Verify the transaction for slower or unstable network environements (like FTP)
         '''
         try:
             if src.is_dir():
+                if not is_recursive:
+                    if self.check_mount_health(dst.parent) == MountState.OFFLINE:
+                        raise StorageError(f"MOUNT OFFLINE: {dst.parent}")
+
                 self.ensure_dir(dst)
 
                 for item in src.iterdir():
                     target = dst / item.name
                     if item.is_dir():
-                        self._buffered_copy(item, target)
+                        self._buffered_copy(item, target, is_recursive=True)
                     else:
                         self._stream_file(item, target)
 
             else:
                 self._stream_file(src, dst)
 
-            logger.info(
-                f"STORAGE: Verifying transmission integrity for {dst.name}...")
+            if not is_recursive:
+                logger.info(
+                    f"STORAGE: Verifying transmission integrity for {dst.name}...")
 
-            if src.is_file():
-                source_size = src.stat().st_size
-                if not integrity_manager.verify_file_integrity(dst, source_size):
-                    raise StorageError(f"TRANSMISSION ERROR: Size mismatch on destination for {src.name}. "
-                                       "Source preserved for retry.")
+                if src.is_file():
+                    source_size = src.stat().st_size
+                    if not integrity_manager.verify_file_integrity(dst, source_size):
+                        raise StorageError(f"TRANSMISSION ERROR: Size mismatch on destination for {src.name}. "
+                                           "Source preserved for retry.")
 
-            elif src.is_dir():
-                if not mount_manager.is_populated(dst):
-                    raise StorageError(f"TRANSMISSION ERROR: Destination folder {
-                                       dst.name} is empty.")
+                elif src.is_dir():
+                    if not mount_manager.is_populated(dst):
+                        raise StorageError(f"TRANSMISSION ERROR: Destination folder {
+                                           dst.name} is empty.")
 
-            logger.info(
-                f"STORAGE: Verication passed. Commiting move and mapping for {src.name}.")
-            self._apply_identity_mapping(dst)
-            self.purge_dir(src)
+                logger.info(
+                    f"STORAGE: Verication passed. Commiting move and mapping for {src.name}.")
+                self._apply_identity_mapping(dst)
+                self.purge_dir(src)
         except shutil.Error as se:
             logger.warning(
                 f"STORAGE WARNING: Metadata copy failed, but bytes were transfered: {se}")
 
         except (StorageError, OSError) as e:
+            if not is_recursive and dst.exists():
+                self.purge_dir(dst)
             raise e
 
     def purge_dir(self, path: Path) -> None:
