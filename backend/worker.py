@@ -9,6 +9,7 @@ from backend.config import settings
 from backend.storage import mount_manager
 from backend.scout import scout_title
 from backend.exceptions import StorageError
+from backend.integrity import integrity_manager
 
 shutdown_event = threading.Event()
 
@@ -27,6 +28,7 @@ def start_worker():
             platform = get_next['platform']
             pkg_url = get_next['pkg_url']
             license_key = get_next['license_key']
+            expected_size = get_next['size_total']
 
             logger.info(f"Found in queue: {name} ({platform.upper()})")
 
@@ -34,25 +36,42 @@ def start_worker():
             success = downloader.download_pkg(pkg_url, title_id, name)
 
             if success:
-                logger.info(
-                    f"Download complete. Starting extraction for {title_id}...")
                 database.update_queue_status(title_id, GameStatus.EXTRACTING)
 
                 from backend.downloader import get_safe_name
                 safe_folder = get_safe_name(name, title_id)
-
-                #! DESTRUCTIVE: os.path replaced in favor of pathlib
                 source_folder: Path = settings.incomplete_dir / safe_folder
                 pkg_file: Path = source_folder / f"{title_id}.pkg"
 
+                #! ARCHITECTURE: verify source PKG size before extraction,
+                # ensures we don't waste time extracting a partial/currupt download
+                if not integrity_manager.verify_file_integrity(pkg_file, expected_size):
+                    logger.error(f"INTEGRITY ERROR: PKG size mismatch for {
+                                 name}. Curruption detected.")
+                    database.update_queue_status(title_id, GameStatus.FAILED)
+                    database.update_queue_status(
+                        title_id, "Downloaded PKG failed size parity check.")
+                    continue
+
                 if extractor.extract_pkg(pkg_file, license_key, platform):
+                    database.update_queue_status(
+                        title_id, GameStatus.VERIFYING)
                     logger.info(
-                        f"extraction Complete. Moving to Library: {name}")
+                        "Extraction Complete. Veryifying file integrity...")
+
+                    if not integrity_manager.verify_structure(source_folder, platform):
+                        logger.error(f"INTEGRITY ERROR: {
+                                     name} extraction failed structural validation.")
+                        database.update_queue_status(
+                            title_id, GameStatus.FAILED)
+                        database.update_queue_status(
+                            title_id, "Extraction produced invalid file structure.")
+                        continue
 
                     database.update_queue_status(
                         title_id, GameStatus.IMPORTING)
                     final_destination: Path = settings.library_dir / safe_folder
-                    logger.info(f"IMPORT: Starting physical transfer of {
+                    logger.info(f"Verification Complete. Starting physical transfer of {
                                 title_id} to library...")
 
                     max_retries = 5
@@ -66,7 +85,7 @@ def start_worker():
                             mount_manager.atomic_move(
                                 source_folder, final_destination)
                             logger.info(
-                                f"IMPORT: {name} successfully commited to library.")
+                                f"Import Complete: {name} successfully commited to library.")
 
                             database.update_queue_status(
                                 title_id, GameStatus.COMPLETED)
