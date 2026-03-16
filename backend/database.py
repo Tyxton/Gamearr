@@ -5,6 +5,7 @@ import numpy as np
 
 from backend.logger import logger
 from backend.config import settings
+from backend.models import MountState
 
 
 def get_db_connection():
@@ -147,6 +148,45 @@ def get_all_games(limit=50):
 
     df = df.astype(object).replace({np.nan: None})
     return df
+
+
+def get_unmapped_folders():
+    '''
+    ARCHITECTURE: Identify folders on disk that do not have a 'completed' entry in queue
+    '''
+    import re
+    from backend.storage import mount_manager
+    from backend.config import settings
+
+    if mount_manager.check_mount_health(settings.library_dir) != MountState.ONLINE:
+        return []
+
+    conn = get_db_connection()
+    managed_ids = {row[0].upper() for row in conn.execute(
+        "SELECT title_id FROM queue").fetchall()}
+
+    unmapped = []
+    for folder in settings.library_dir.iterdir():
+        if not folder.is_dir():
+            continue
+
+        match = re.search(r'\[([A-Z]{4}\d{5})\]', folder.name.upper())
+        if match:
+            tid = match.group(1)
+            if tid not in managed_ids:
+                game_info = conn.execute(
+                    "SELECT name, platform, region FROM games WHERE title_id =?", (tid,)).fetchone()
+
+                unmapped.append({
+                    "folder_name": folder.name,
+                    "title_id": tid,
+                    "name": game_info[0] if game_info else "Unknown Title",
+                    "platform": game_info[1] if game_info else "Unknown Platform",
+                    "region": game_info[2] if game_info else "Unknown Region",
+                    "exists_in_nps": bool(game_info)
+                })
+    conn.close()
+    return unmapped
 
 
 def search_game_db(query):

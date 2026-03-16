@@ -1,6 +1,7 @@
 # COPYRIGHT (C) 2026 nottyxton and The Gamearr Authors
 
 import asyncio
+import platform
 import pandas as pd
 import numpy as np
 from contextlib import asynccontextmanager
@@ -333,6 +334,46 @@ async def toggle_monitor(payload: dict = Body(...)):
 
     monitored = await asyncio.to_thread(_toggle)
     return {"message": "Updated", "monitored": monitored}
+
+
+@api_router.get("/library/unmapped")
+async def get_unmapped():
+    return await asyncio.to_thread(database.get_unmapped_folders)
+
+
+@api_router.post("/library/import")
+async def import_unmapped(payload: dict = Body(...)):
+    '''
+    ARCHITECTURE: Moves an unmapped folder into the 'completed' state and triggers
+    identity mapping and matadata scouting for that title
+    '''
+    title_id = payload.get("title_id").upper()
+
+    def _adopt():
+        conn = database.get_db_connection()
+        game = conn.execute(
+            "SELECT * FROM games WHERE title_id = ?", (title_id,)).fetchone()
+        if not game:
+            raise HTTPException(
+                status_code=404, detail="Title ID not found in NPS manifest.")
+
+        conn.execute('''
+            INSERT OR REPLACE INTO queue (
+            title_id, platform, region, name, status, pkg_url, license_key, added_at, progress
+            ) VALUES (?, ?, ?, ?, 'completed', ?, ?, CURRENT_TIMESTAMP, 100.0)
+        ''', (game['title_id'], game['platform'], game['region'], game['name'], game['pkg_url'], game['license_key']))
+        conn.commit()
+        conn.close()
+
+        from backend.downloader import get_safe_name
+        safe_folder = get_safe_name(game['name'], game['title_id'])
+        mount_manager._apply_identity_mapping(
+            settings.library_dir / safe_folder)
+
+        scout.scout_title(game['title_id'], game['name'])
+
+        return {"message": f"Successfully adopted {game['name']}"}
+    return await asyncio.to_thread(_adopt)
 
 
 @api_router.post("/games/bulk")
