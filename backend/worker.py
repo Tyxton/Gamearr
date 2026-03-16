@@ -33,11 +33,12 @@ def start_worker():
             logger.info(f"Found in queue: {name} ({platform.upper()})")
 
             database.update_queue_status(title_id, GameStatus.DOWNLOADING)
-            success = downloader.download_pkg(pkg_url, title_id, name)
+            success = downloader.download_pkg(
+                pkg_url, title_id, name, expected_size)
             if not success:
                 continue
 
-            database.update_queue_status(title_id, GameStatus.EXTRACTING)
+            database.update_queue_status(title_id, GameStatus.VERIFYING)
 
             from backend.downloader import get_safe_name
             safe_folder = get_safe_name(name, title_id)
@@ -53,6 +54,8 @@ def start_worker():
                 database.update_queue_status(
                     title_id, "Downloaded PKG failed size parity check.")
                 continue
+
+            database.update_queue_status(title_id, GameStatus.EXTRACTING)
 
             if extractor.extract_pkg(pkg_file, license_key, platform):
                 database.update_queue_status(

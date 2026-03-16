@@ -13,14 +13,27 @@ from backend.models import GameStatus
 PROGRESS_RE = re.compile(r'\((\d+)%\)')
 
 
-def download_pkg(url, title_id, name):
+def download_pkg(url, title_id, name, expected_size: int):
     safe_name = get_safe_name(name, title_id)
     download_dir: Path = settings.incomplete_dir / safe_name
+    pkg_file = download_dir / f"{title_id}.pkg"
 
     MManager = MountManager()
-
-    MManager.purge_dir(download_dir)
     MManager.ensure_dir(download_dir)
+
+    if pkg_file.exists():
+        try:
+            actual_size = pkg_file.stat().st_size
+            if actual_size == expected_size:
+                logger.info(f"DOWNLOADER: {
+                            name} already exists and matches size. Skipping download.")
+                return True
+            if actual_size > expected_size:
+                logger.warning(f"DOWNLOADER: size mismatch for existing {
+                               name}. Purging.")
+                MManager.purge_dir(pkg_file)
+        except OSError as e:
+            logger.error(f"DOWNLOADER: Failed to stat existing file: {e}")
 
     threads = "4" if settings.is_arm else "16"
 
@@ -29,7 +42,7 @@ def download_pkg(url, title_id, name):
         "-d", str(download_dir), "-o", f"{title_id}.pkg",
         "--connect-timeout=30", "--timeout=60", "--split=16",
         "--summary-interval=1", "--console-log-level=notice",
-        "--allow-overwrite=true", url
+        "-continue=true", "--allow-overwrite=false", "--allow-file-renaming=false", url
     ]
 
     try:

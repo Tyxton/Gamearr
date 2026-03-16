@@ -31,7 +31,7 @@ class IntegrityManager:
         try:
             actual_size = file_path.stat().st_size
 
-            if expected_size == 0:
+            if expected_size <= 0:
                 logger.warning(f"INTEGRITY WARNING: No expected size for {
                                file_path.name}. Skipping verification.")
                 return True
