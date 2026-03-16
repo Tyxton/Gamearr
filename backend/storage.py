@@ -1,4 +1,3 @@
-import time
 import os
 import errno
 import shutil
@@ -33,23 +32,27 @@ class MountManager:
 
     def check_mount_health(self, path: Path) -> MountState:
         '''
-        ARCHITECTURE: Walks up the directory tree to find the nearest
-        existing ancestor, if any parent exists the filesystem is considered ONLINE.
+        #! ARCHITECTURE: Using path.stat to force kernel re-eval of the inode
         '''
         try:
-            check_path = path
-            while not check_path.exists():
-                if check_path == check_path.parent:
-                    self._update_state(path, MountState.OFFLINE)
-                    return MountState.OFFLINE
-                check_path = check_path.parent
-
-            self._update_state(check_path, MountState.ONLINE)
+            path.stat()
+            self._update_state(path, MountState.ONLINE)
             return MountState.ONLINE
 
+        #! ARHCITECTURE: better error handling for LXCs
+
         except (OSError, PermissionError) as e:
-            logger.error(
-                f"STORAGE ERROR: Critical I/O fault checking {path}: {e}")
+            if e.errno in (errno.ESTALE, errno.ETIMEDOUT, errno.EHOSTUNREACH, errno.ENETUNREACH):
+                self._update_state(path, MountState.OFFLINE)
+                return MountState.OFFLINE
+
+            if e.errno == errno.EACCES:
+                self._update_state(path, MountState.DEGRADED)
+                return MountState.DEGRADED
+
+            if e.errno == errno.ENOENT:
+                return self.check_mount_health(path.parent) if path != path.parent else MountState.OFFLINE
+
             self._update_state(path, MountState.OFFLINE)
             return MountState.OFFLINE
 

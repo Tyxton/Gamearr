@@ -97,29 +97,23 @@ def start_worker():
                         attempts += 1
                         err_msg = str(e)
 
-                        #! ARCHITECTURE: check if the error is a transient
-                        # network issue or a fatal logic error
-
-                        is_transient = any(x in err_msg.upper() for x in [
-                            "TIMEOUT", "OFFLINE", "VANISHED", "HOST"])
-
-                        if is_transient and attempts < max_retries:
+                        #! ARCHITECTURE: force the worker to use the STALLED variable
+                        if mount_manager.check_mount_health(settings.library_dir) == MountState.OFFLINE:
                             logger.warning(f"IMPORT STALLED: {
-                                name} - {err_msg}. Waiting for mount recovery (Attempt {attempts}/{max_retries})")
+                                           name} - Mount offline. Waiting for recovery...")
                             database.update_queue_status(
                                 title_id, GameStatus.STALLED)
-                            database.update_queue_error(
-                                title_id, f"Transient I/O Fault: {err_msg}")
+                            database.update_queue_status(title_id, str(e))
 
-                            wait_limit = 20
-                            waited = 0
-                            while waited < wait_limit:
-                                if shutdown_event.is_set() or mount_manager.check_mount_health(settings.library_dir) == MountState.ONLINE:
+                            while not shutdown_event.is_set():
+                                if mount_manager.check_mount_health(settings.library_dir) == MountState.ONLINE:
+                                    logger.info(
+                                        f"RECOVERY: Mount restored. Resuming {name}...")
                                     break
                                 time.sleep(30)
-                                waited += 1
 
                             continue
+
                         else:
                             #! ARCHITECTURE: Hard failure on max retries or fatal error (disk full/permissions)
                             logger.error(f"IMPORT FATAL: {name} failed aftrer {
