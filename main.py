@@ -10,7 +10,7 @@ from fastapi.staticfiles import StaticFiles
 
 from backend import parser, database, metadata, scout
 from backend.exceptions import StorageError
-from backend.models import GameModel, QueuePayload, BulkActionPayload
+from backend.models import GameModel, MountState, QueuePayload, BulkActionPayload
 from backend.auth import validate_api_key
 from backend.logger import logger, LOG_FILE
 from backend.config import settings
@@ -217,6 +217,16 @@ async def queue_endpoint(game: QueuePayload):
     '''
     def _preflight_add():
         try:
+            library_state = mount_manager.get_state(settings.library_dir)
+            incomplete_state = mount_manager.get_state(settings.incomplete_dir)
+
+            if MountState.DEGRADED in (library_state, incomplete_state):
+                raise StorageError(
+                    "Storage is in DEGRADED state.", is_permission_error=True)
+
+            if MountState.OFFLINE in (library_state, incomplete_state):
+                raise StorageError("Storage is OFFLINE.")
+
             mount_manager.preflight_test()
 
             return database.add_to_queue(
@@ -228,14 +238,16 @@ async def queue_endpoint(game: QueuePayload):
                 game.license_key
             )
         except StorageError as se:
-            if "OFFLINE" in str(se):
+            if se.is_permission_error:
                 raise HTTPException(
-                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                    detail=str(se)
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail=f"Failed to add to queue, permission error in destination: {
+                        str(se)}"
                 )
             raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail=str(se)
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=f"Failed to add to queue, destination is OFFLINE: {
+                    str(se)}"
             )
 
     success = await asyncio.to_thread(_preflight_add)

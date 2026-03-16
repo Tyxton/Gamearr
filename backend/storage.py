@@ -243,8 +243,9 @@ class MountManager:
     def is_writable(self, path: Path) -> bool:
         '''
         ARCHITECTURE: Can tell the difference between a stale mount and a RO permission error.
+        using PID tagging to ensure we have POSIX write+delete permissions
         '''
-        heartbeat_file = path / ".gamearr_heartbeat"
+        heartbeat_file = path / ".gamearr_heartbeat_{os.getpid()}"
         try:
             path.mkdir(parents=True, exist_ok=True)
 
@@ -276,25 +277,25 @@ class MountManager:
         '''
         ARCHITECTURE: Validates the entire i/o pipeline before accepting new tasks.
         '''
-        incomplete_state = self.check_mount_health(settings.incomplete_dir)
-        if incomplete_state == MountState.OFFLINE:
-            raise StorageError(
-                "Download directory is OFFLINE. Check NAS connectivity. Aborting...")
-        if incomplete_state == MountState.DEGRADED:
-            raise StorageError(
-                "Download directory is READ-ONLY. Check NAS/LXC/Docker permissions. Aborting...")
+        targets = [
+            ("Library", settings.library_dir),
+            ("Incomplete", settings.incomplete_dir)
+        ]
 
-        library_state = self.check_mount_health(settings.library_dir)
-        if library_state == MountState.OFFLINE:
-            raise StorageError(
-                "Library directory is OFFLINE. Check NAS connectivity. Aborting...")
-        if library_state == MountState.DEGRADED:
-            raise StorageError(
-                "Library directory is READ-ONLY. Check destination privileges. Aborting...")
+        for name, path in targets:
+            state = self.check_mount_health(path)
 
-        if not self.is_writable(settings.incomplete_dir):
-            raise StorageError(
-                "Pre-flight write test failed on download buffer. Aborting...")
+            if state == MountState.OFFLINE:
+                raise StorageError(
+                    f"{name} storage is OFFLINE. Check NAS/VLAN connectivity.")
+
+            if not self.is_writable(path):
+                self._update_state(path, MountState.DEGRADED)
+                raise StorageError(
+                    f"{name} storage is READ-ONLY. Check UID/GID permissions.", is_permission_error=True)
+
+    def get_state(self, path: Path) -> MountState:
+        return self._mount_cache.get(str(path.resolve()), MountState.OFFLINE)
 
     class DiskTelemetry(TypedDict):
         total_gb: int
