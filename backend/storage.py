@@ -42,7 +42,7 @@ class MountManager:
         #! ARHCITECTURE: better error handling for LXCs
 
         except (OSError, PermissionError) as e:
-            if e.errno in (errno.ESTALE, errno.ETIMEDOUT, errno.EHOSTUNREACH, errno.ENETUNREACH):
+            if e.errno in (errno.ESTALE, errno.ETIMEDOUT, errno.EHOSTUNREACH, errno.ENETUNREACH, errno.EIO):
                 self._update_state(path, MountState.OFFLINE)
                 return MountState.OFFLINE
 
@@ -107,22 +107,19 @@ class MountManager:
 
     def atomic_move(self, src: Path, dst: Path) -> None:
         '''
-        REFACTOR: Update the MountState during a failure
+        REFACTOR: Skipping the atomic rename, and going straight to the _buffered_copy
         '''
         if self.check_mount_health(dst.parent) == MountState.OFFLINE:
             raise StorageError(f"IMPORT ABORTED: Mount {
-                               dst.parent} is OFFLINE.")
+                               dst.parent} is OFFLINE.", title_id="SYS")
 
         try:
-            src.rename(dst)
-            self._apply_identity_mapping(dst)
-            logger.info(
-                f"STORAGE: Atomic rename and identity mapping successful for {src.name}")
-        except (OSError, PermissionError):
-            logger.warning(
-                f"STORAGE: Falling back to buffered stream for {src.name}")
-
             self._buffered_copy(src, dst)
+        except (OSError, PermissionError) as e:
+            logger.error(
+                f"STORAGE FATAL: Migration failed for {src.name}: {e}")
+            raise StorageError(f"Error during migration: {
+                               str(e)}", title_id="SYS")
 
     def _stream_file(self, src: Path, dst: Path) -> None:
         '''
@@ -131,7 +128,6 @@ class MountManager:
         Ultimately, reducing the i/o wait of the network share.
         '''
         with self._io_lock:
-            logger.debug(f"IO_LOCK: Aquired token for {src.name}")
             try:
                 with src.open('rb') as fsrc:
                     with dst.open('wb') as fdst:
@@ -161,24 +157,19 @@ class MountManager:
             except PermissionError:
                 self._update_state(dst.parent, MountState.DEGRADED)
                 raise StorageError(f"PERMISSION DENIED: Cannot write to {
-                    dst.name}. Check target_uid settings.")
+                    dst.name}. Check target_uid settings.", title_id="SYS")
 
             except OSError as e:
-                if e.errno == errno.ENOSPC:
-                    if dst.exists():
-                        dst.unlink()
-                    raise StorageError(
-                        f"DISK FULL: No space remaining on {dst.parent}")
-                if e.errno in (errno.ETIMEDOUT, errno.EHOSTUNREACH, errno.ENETUNREACH):
+                if dst.exists():
+                    dst.unlink()
+
+                if e.errno in (errno.ETIMEDOUT, errno.EHOSTUNREACH, errno.ENETUNREACH, errno.ESTALE):
                     self._update_state(dst.parent, MountState.OFFLINE)
-                    raise StorageError(
-                        f"NETWORK TIMEOUT: NAS connection lost during stream of {src.name}")
+                    raise StorageError(f"NETWORK TIMED OUT: {
+                                       dst.parent} stopped responding.", title_id="SYS")
 
-                raise StorageError(
-                    f"I/O FAULT (errno {e.errno}): {e.strerror}")
-
-            finally:
-                logger.debug(f"IO_LOCK: Released token for {src.name}")
+                raise StorageError(f"STREAM ERROR (errno {e.errno}): {
+                                   e.strerror}", title_id="SYS")
 
     def _buffered_copy(self, src: Path, dst: Path, is_recursive: bool = False) -> None:
         '''
@@ -189,7 +180,8 @@ class MountManager:
             if src.is_dir():
                 if not is_recursive:
                     if self.check_mount_health(dst.parent) == MountState.OFFLINE:
-                        raise StorageError(f"MOUNT OFFLINE: {dst.parent}")
+                        raise StorageError(f"MOUNT OFFLINE: {
+                                           dst.parent}", title_id="SYS")
 
                 self.ensure_dir(dst)
 
@@ -211,12 +203,12 @@ class MountManager:
                     source_size = src.stat().st_size
                     if not integrity_manager.verify_file_integrity(dst, source_size):
                         raise StorageError(f"TRANSMISSION ERROR: Size mismatch on destination for {src.name}. "
-                                           "Source preserved for retry.")
+                                           "Source preserved for retry.", title_id="SYS")
 
                 elif src.is_dir():
                     if not mount_manager.is_populated(dst):
                         raise StorageError(f"TRANSMISSION ERROR: Destination folder {
-                                           dst.name} is empty.")
+                                           dst.name} is empty.", title_id="SYS")
 
                 logger.info(
                     f"STORAGE: Verication passed. Commiting move and mapping for {src.name}.")

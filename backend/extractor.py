@@ -1,5 +1,7 @@
 import subprocess
+import errno
 import os
+from sys import stderr
 import zipfile
 from pathlib import Path
 
@@ -42,14 +44,24 @@ def extract_pkg(pkg_path: Path, license_key: str, platform: str) -> bool:
                 #! ARCHITECTURE: Non-POSIX (i.e Windows) don't support nice
                 pass
 
-        subprocess.run(
-            command,
-            check=True,
-            cwd=str(work_dir),
-            preexec_fn=_set_priority if priority > 0 else None,
-            capture_output=True,
-            text=True
-        )
+        with subprocess.Popen(
+                command,
+                cwd=str(work_dir),
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.PIPE,
+                text=True,
+        ) as proc:
+            try:
+                _, stderr = proc.communicate(timeout=7200)
+                if proc.returncode != 0:
+                    logger.error(f"EXTRACTION FAILURE: pkg2zip exited {
+                                 proc.returncode}. Error: {stderr}")
+                    return False
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                logger.error(
+                    "EXTRACTION CRITICAL: pkg2zip timed out after 2 hours.")
+                return False
 
         if platform.lower() in ['psx', 'psp']:
             zip_files = list(work_dir.glob("*.zip"))
@@ -78,3 +90,7 @@ def extract_pkg(pkg_path: Path, license_key: str, platform: str) -> bool:
         logger.error(
             "EXTRACTION FATAL: 'pkg2zip' binary unreachable in host PATH.")
         return False
+    except OSError as e:
+        if e.errno == errno.ENOENT:
+            logger.error(
+                "EXTRACTION FATAL: 'pkg2zip' binary unreachable in host PATH.")
