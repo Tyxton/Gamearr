@@ -21,7 +21,8 @@ def start_worker():
         try:
             get_next = database.get_next_queued_task()
             if not get_next:
-                return
+                time.sleep(5)
+                continue
 
             title_id = get_next['title_id']
             name = get_next['name']
@@ -80,51 +81,62 @@ def start_worker():
 
                 max_retries = 5
                 attempts = 0
+                transaction_complete = False
 
-                while attempts < max_retries:
+                while attempts < max_retries and not transaction_complete:
                     if shutdown_event.is_set():
                         break
 
                     try:
                         mount_manager.atomic_move(
                             source_folder, final_destination)
+                        transaction_complete = True
                         logger.info(
                             f"Import Complete: {name} successfully commited to library.")
 
                         database.update_queue_status(
                             title_id, GameStatus.COMPLETED)
                         scout_title(title_id, name)
-                        break
 
                     except StorageError as e:
-                        attempts += 1
-                        err_msg = str(e)
+                        current_state = mount_manager.check_mount_health(
+                            settings.library_dir)
 
                         #! ARCHITECTURE: force the worker to use the STALLED variable
-                        if mount_manager.check_mount_health(settings.library_dir) == MountState.OFFLINE:
+                        if current_state == MountState.OFFLINE:
+                            attempts += 1
                             logger.warning(f"IMPORT STALLED: {
                                            name} - Mount offline. Waiting for recovery...")
                             database.update_queue_status(
                                 title_id, GameStatus.STALLED)
-                            database.update_queue_status(title_id, str(e))
+                            database.update_queue_error(title_id, str(e))
 
                             while not shutdown_event.is_set():
-                                if mount_manager.check_mount_health(settings.library_dir) == MountState.ONLINE:
+                                time.sleep(settings.disk_timeout)
+
+                                if current_state == MountState.ONLINE:
                                     logger.info(
                                         f"RECOVERY: Mount restored. Resuming {name}...")
+                                    database.update_queue_status(
+                                        title_id, GameStatus.IMPORTING)
                                     break
-                                time.sleep(30)
 
                             continue
 
                         else:
-                            #! ARCHITECTURE: Hard failure on max retries or fatal error (disk full/permissions)
-                            logger.error(f"IMPORT FATAL: {name} failed aftrer {
-                                attempts} attempts. Error: {err_msg}")
-                            database.update_queue_status(
-                                title_id, GameStatus.FAILED)
-                            database.update_queue_error(title_id, err_msg)
-                            break
+                            attempts += 1
+                            err_msg = f"IMPORT FAILED: {str(e)}"
+                            logger.error(f"IMPORT ERROR: {
+                                         err_msg} (Attempt {attempts})")
+
+                            if attempts >= max_retries:
+                                database.update_queue_status(
+                                    title_id, GameStatus.FAILED)
+                                database.update_queue_error(title_id, err_msg)
+                                mount_manager.purge_dir(final_destination)
+                            else:
+                                time.sleep(30)
+
         except Exception as e:
             logger.error(f"WORKER CRITICAL: Unexpected thread collapse: {e}")
             time.sleep(10)
