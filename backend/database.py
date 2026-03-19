@@ -150,43 +150,30 @@ def get_all_games(limit=50):
     return df
 
 
-def get_unmapped_folders():
-    '''
-    ARCHITECTURE: Identify folders on disk that do not have a 'completed' entry in queue
-    '''
-    import re
-    from backend.storage import mount_manager
-    from backend.config import settings
+"""
+ARCHTITECTURE: get_unmapped_folders transfered to scout.run_library_import
+as it was more fitting there. The logic changed slightly to allow Gamearr
+to syncronize the pre-existing folers to the DB. It also cross-references the
+NPS manifest, and moves it to 'completed.' This allows for indexing without redownloading
+if unneeded.
+"""
 
-    if mount_manager.check_mount_health(settings.library_dir) != MountState.ONLINE:
-        return []
 
+def get_unmapped_games(title_id: str, name: str, platform: str, region: str):
     conn = get_db_connection()
-    managed_ids = {row[0].upper() for row in conn.execute(
-        "SELECT title_id FROM queue").fetchall()}
-
-    unmapped = []
-    for folder in settings.library_dir.iterdir():
-        if not folder.is_dir():
-            continue
-
-        match = re.search(r'\[([A-Z]{4}\d{5})\]', folder.name.upper())
-        if match:
-            tid = match.group(1)
-            if tid not in managed_ids:
-                game_info = conn.execute(
-                    "SELECT name, platform, region FROM games WHERE title_id =?", (tid,)).fetchone()
-
-                unmapped.append({
-                    "folder_name": folder.name,
-                    "title_id": tid,
-                    "name": game_info[0] if game_info else "Unknown Title",
-                    "platform": game_info[1] if game_info else "Unknown Platform",
-                    "region": game_info[2] if game_info else "Unknown Region",
-                    "exists_in_nps": bool(game_info)
-                })
-    conn.close()
-    return unmapped
+    try:
+        conn.execute('''
+            INSERT OR IGNORE INTO queue (
+                title_id, platform, region, name, status, pkg_url, license_key, progress, added_at
+            ) VALUES (?, ?, ?, ?, 'completed', 'COLD_IMPORT', 'COLD_IMPORT', 100.0, CURRENT_TIMESTAMP)
+        ''', (title_id.upper(), platform, region, name))
+        conn.commit()
+        return True
+    except sqlite3.Error as e:
+        logger.error(f"DATABASE ERROR: Failed to adopt {title_id}: {e}")
+        return False
+    finally:
+        conn.close()
 
 
 def search_game_db(query):

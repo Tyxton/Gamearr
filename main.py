@@ -44,6 +44,7 @@ async def lifespan(app: FastAPI):
     await asyncio.to_thread(database.get_or_generate_api_key)
 
     async def _delayed_start():
+        await asyncio.to_thread(scout.run_library_import)
         await asyncio.to_thread(parser.sync_database)
         await asyncio.to_thread(scout.run_library_sync)
 

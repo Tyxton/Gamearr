@@ -4,6 +4,7 @@ from backend import database, metadata
 from backend.models import GameStatus, MountState
 from backend.config import settings
 from backend.logger import logger
+from backend.storage import mount_manager
 
 
 def run_meta_scout(single_id=None):
@@ -81,6 +82,7 @@ def run_library_sync():
     if mount_manager.check_mount_health(settings.library_dir) != MountState.ONLINE:
         logger.warning(
             "SCOUT: Library mount is not ONLINE. Skipping ghost purge to prevent accidental data loss.")
+        return
 
     conn = database.get_db_connection()
     conn.row_factory = sqlite3.Row
@@ -131,6 +133,54 @@ def run_library_sync():
         scout_title(item['title_id'], item['name'])
         import time
         time.sleep(1)
+
+
+def run_library_import():
+    '''
+    Scans LIBRARY_DIR for folders not present in the database.
+    '''
+    if mount_manager.check_mount_health(settings.library_dir) != MountState.ONLINE:
+        logger.warning(
+            "SCOUT: Library mount is OFFLINE. Aboring cold import to prevent state drift.")
+        return
+
+    conn = database.get_db_connection()
+    managed_ids = {row[0].upper() for row in conn.execute(
+        "SELECT title_id FROM queue").fetchall()}
+
+    discovered_count = 0
+    for folder in settings.library_dir.iterdir():
+        if not folder.is_dir():
+            continue
+
+        match = re.search(r'\[([A-Z]{4}\d{5})\]', folder.name.upper())
+        if not match:
+            continue
+
+        tid = match.group(1)
+        if tid not in managed_ids:
+            game_info = conn.execute(
+                "SELECT name, platform, region FROM games WHERE title_id = ?", (
+                    tid,)
+            ).fetchone()
+
+            if game_info:
+                name, platform, region = game_info
+                logger.info(f"SCOUT: Discovered unmanaged title {
+                            name} [{tid}]. Adopting...")
+                if database.get_unmapped_games(tid, name, platform, region):
+                    mount_manager._apply_identity_mapping(folder)
+                    scout_title(tid, name)
+                    discovered_count += 1
+
+            else:
+                logger.warning(f"SCOUT: Found folder {folder.name} but Title ID {
+                               tid} is missing from NPS manifest.")
+
+    conn.close()
+    if discovered_count > 0:
+        logger.info(f"SCOUT: Cold import finished {
+                    discovered_count} titles adopted into library.")
 
 
 if __name__ == "__main__":
