@@ -85,6 +85,8 @@ def start_worker():
 
                 while attempts < max_retries and not transaction_complete:
                     if shutdown_event.is_set():
+                        database.update_queue_status(
+                            get_next['title_id'], GameStatus.STALLED)
                         break
 
                     try:
@@ -139,7 +141,10 @@ def start_worker():
 
         except Exception as e:
             logger.error(f"WORKER CRITICAL: Unexpected thread collapse: {e}")
-            time.sleep(10)
+            if not shutdown_event.is_set():
+                time.sleep(10)
+
+    logger.info("WORKER: Thread exited gracefully.")
 
 
 if __name__ == "__main__":

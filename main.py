@@ -1,7 +1,6 @@
 # COPYRIGHT (C) 2026 nottyxton and The Gamearr Authors
 
 import asyncio
-import platform
 import pandas as pd
 import numpy as np
 from contextlib import asynccontextmanager
@@ -9,6 +8,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, Body, BackgroundTasks, Depends, APIRouter, status
 from fastapi.staticfiles import StaticFiles
 
+from backend.worker import shutdown_event
 from backend import parser, database, metadata, scout
 from backend.exceptions import StorageError
 from backend.models import GameModel, MountState, QueuePayload, BulkActionPayload
@@ -57,6 +57,27 @@ async def lifespan(app: FastAPI):
     asyncio.create_task(_delayed_start())
 
     yield
+
+    logger.info("--- Gamearr Stopping ---")
+    shutdown_event.set()
+
+    tasks: list[asyncio.Task[Any]] = [
+        t for t in asyncio.all_tasks() if t is not asyncio.current_task()
+    ]
+
+    logger.debug(f"Terminating {len(tasks)} background tasks...")
+    for task in tasks:
+        task.cancel()
+
+    try:
+        await asyncio.wait_for(
+            asyncio.gather(*tasks, return_exceptions=True),
+            timeout=10.0
+        )
+    except asyncio.TimeoutError:
+        logger.warning("Shutdown timed out. Forcing exit...")
+
+    logger.info("Shutdown complete. Storage handles released.")
 
 
 async def run_async_heartbeat():

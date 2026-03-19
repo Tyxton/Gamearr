@@ -1,6 +1,7 @@
 from pydantic import BaseModel
 from datetime import datetime
 from enum import Enum
+from typing import TypedDict
 
 
 class GameModel(BaseModel):
@@ -59,3 +60,9 @@ class GameStatus(str, Enum):
 class BulkActionPayload(BaseModel):
     title_ids: list[str]
     action: str
+
+
+class ShutdownStatus(TypedDict):
+    tasks_closed: int
+    force_killed: bool
+    storage_synced: bool

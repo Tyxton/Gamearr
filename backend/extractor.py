@@ -1,13 +1,14 @@
-from gzip import BadGzipFile
 import subprocess
 import errno
 import os
 from sys import stderr
 import zipfile
 from pathlib import Path
+import time
 
 from backend.logger import logger
 from backend.config import settings
+from backend.worker import shutdown_event
 
 
 def extract_pkg(pkg_path: Path, license_key: str, platform: str) -> bool:
@@ -53,6 +54,15 @@ def extract_pkg(pkg_path: Path, license_key: str, platform: str) -> bool:
                 text=True,
         ) as proc:
             try:
+                while proc.poll() is None:
+                    if shutdown_event.is_set():
+                        logger.warning(
+                            "EXTRACTOR: Shutdown signal recieved. Killing pkg2zip...")
+                        proc.terminate()
+                        proc.wait()
+                        return False
+                    time.sleep(1)
+
                 _, stderr = proc.communicate(timeout=7200)
                 if proc.returncode != 0:
                     logger.error(f"EXTRACTION FAILURE: pkg2zip exited {
