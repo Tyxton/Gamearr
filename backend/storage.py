@@ -279,12 +279,12 @@ class MountManager:
 
             if state == MountState.OFFLINE:
                 raise StorageError(
-                    f"{name} storage is OFFLINE. Check NAS/VLAN connectivity.")
+                    f"{name} storage is OFFLINE. Check NAS/VLAN connectivity.", title_id="SYS")
 
             if not self.is_writable(path):
                 self._update_state(path, MountState.DEGRADED)
                 raise StorageError(
-                    f"{name} storage is READ-ONLY. Check UID/GID permissions.", is_permission_error=True)
+                    f"{name} storage is READ-ONLY. Check UID/GID permissions.", is_permission_error=True, title_id="SYS")
 
     def get_state(self, path: Path) -> MountState:
         return self._mount_cache.get(str(path.resolve()), MountState.OFFLINE)

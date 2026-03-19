@@ -218,42 +218,39 @@ async def queue_endpoint(game: QueuePayload):
     403 Forbidden = Mount point is degraded/RO
     '''
     def _preflight_add():
-        try:
-            library_state = mount_manager.get_state(settings.library_dir)
-            incomplete_state = mount_manager.get_state(settings.incomplete_dir)
+        mount_manager.preflight_test()
 
-            if MountState.DEGRADED in (library_state, incomplete_state):
-                raise StorageError(
-                    "Storage is in DEGRADED state.", is_permission_error=True)
+        return database.add_to_queue(
+            game.platform,
+            game.title_id,
+            game.region,
+            game.name,
+            game.pkg_url,
+            game.license_key
+        )
 
-            if MountState.OFFLINE in (library_state, incomplete_state):
-                raise StorageError("Storage is OFFLINE.")
+    try:
+        success = await asyncio.to_thread(_preflight_add)
+        if success:
+            return {"message": "Success"}
+        raise HTTPException(
+            status_code=500, detail="Failed to add to database.")
 
-            mount_manager.preflight_test()
-
-            return database.add_to_queue(
-                game.platform,
-                game.title_id,
-                game.region,
-                game.name,
-                game.pkg_url,
-                game.license_key
-            )
-        except StorageError as se:
-            if se.is_permission_error:
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail=f"Failed to add to queue, permission error in destination: {
-                        str(se)}"
-                )
+    except StorageError as se:
+        if se.is_permission_error:
+            logger.warning(
+                f"QUEUE REJECTION: Attempted queue add while stroage is DEGRADED: {se.message}")
             raise HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail=f"Failed to add to queue, destination is OFFLINE: {
-                    str(se)}"
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=se.message
             )
 
-    success = await asyncio.to_thread(_preflight_add)
-    return {"message": "Success"} if success else {"error": "Failed to add to queue"}
+        logger.error(
+            f"QUEUE REJECTION: Attempted queue add while storage is OFFLINE: {se.message}")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=se.message
+        )
 
 
 @api_router.get("/queue")

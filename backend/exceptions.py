@@ -13,10 +13,9 @@ class StorageError(GamearrError):
     Traps cross-device links, stale SMB handles, and LXC VLAN permission drops.
     '''
 
-    def __init__(self, message: str, title_id: str, is_permission_error: bool = False):
+    def __init__(self, message: str, title_id: str = "SYS", is_permission_error: bool = False):
         self.is_permission_error = is_permission_error
         super().__init__(message, title_id)
-    pass
 
 
 class MetadataError(GamearrError):
