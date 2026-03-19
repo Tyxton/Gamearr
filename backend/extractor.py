@@ -108,3 +108,6 @@ def extract_pkg(pkg_path: Path, license_key: str, platform: str) -> bool:
         if e.errno == errno.ENOENT:
             logger.error(
                 "EXTRACTION FATAL: 'pkg2zip' binary unreachable in host PATH.")
+        else:
+            logger.error(f"EXTRACTION FATAL: {e.strerror}")
+        return False
