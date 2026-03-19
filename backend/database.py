@@ -204,6 +204,7 @@ if unneeded.
 """
 
 
+@db_retry()
 def get_unmapped_games(title_id: str, name: str, platform: str, region: str):
     conn = get_db_connection()
     try:
@@ -325,6 +326,7 @@ def update_queue_error(title_id: str, error_msg: str):
     conn.close()
 
 
+@db_retry
 def update_progress(title_id: str, progress: float, size_current: int, size_total: int) -> None:
     '''
     ARCHTITECTURE: Optimized progress updater for the UI
