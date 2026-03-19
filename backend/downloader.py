@@ -12,6 +12,19 @@ from backend.models import GameStatus
 
 PROGRESS_RE = re.compile(r'\((\d+)%\)')
 
+ARIA2_EXIT_MAP = {
+    1: "Unknown Error occured.",
+    2: "Time out occurred.",
+    3: "Resource was not found.",
+    7: "Protocol error.",
+    8: "Remote server refused connection.",
+    9: "Not enough disk space.",
+    13: "Download speed too slow.",
+    15: "Checksum confirmation failed.",
+    16: "External program (pkg2zip) or script failed.",
+    20: "Could not resolve hostname",
+}
+
 
 def download_pkg(url, title_id, name, expected_size: int):
     safe_name = get_safe_name(name, title_id)
@@ -62,33 +75,45 @@ def download_pkg(url, title_id, name, expected_size: int):
         last_update_time = 0.0
         current_percent = 0
 
-        for line in process.stdout:
+        while True:
+            line = process.stdout.readline()
+            if not line and process.poll() is not None:
+                break
+
             if shutdown_event.is_set():
-                update_progress(title_id, current_percent, 0, 0)
-                database.update_queue_status(title_id, GameStatus.PENDING)
                 process.terminate()
-                logger.warning(f"DOWNLOADER WARNING: Terminating aria2c process for {
-                               name} due to system shutdown.")
+                try:
+                    process.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                logger.warning(
+                    f"DOWNLOADER: Shutdown signal received. Terminated aria2c for {name}.")
                 return False
 
-            match = PROGRESS_RE.search(line)
-            if match:
-                new_percent = int(match.group(1))
-                if new_percent != current_percent and (time.time() - last_update_time) > 5.0:
-                    current_percent = new_percent
-                    last_update_time = time.time()
+            if line:
+                match = PROGRESS_RE.search(line)
+                if match:
+                    new_percent = int(match.group(1))
 
-                    update_progress(title_id, float(current_percent), 0, 0)
-                    logger.info(f"Downloading {name}: {current_percent}%")
+                    if new_percent != current_percent and (time.time() - last_update_time) > 5.0:
+                        current_percent = new_percent
+                        last_update_time = time.time()
+                        update_progress(title_id, float(
+                            current_percent), 0, expected_size)
+                        logger.info(f"Downloading {name}: {current_percent}%")
 
-        process.wait()
+        exit_code = process.wait()
 
-        if process.returncode == 0:
+        if exit_code == 0:
             update_progress(title_id, 100.0, 0, 0)
             return True
         else:
+            err_msg = ARIA2_EXIT_MAP.get(
+                exit_code, f"Aria2c exited with the code {exit_code}")
             logger.error(f"CRITICAL ERROR: aria2c exited with status {
                          process.returncode}")
+            database.update_queue_error(title_id, err_msg)
+            database.update_queue_status(title_id, GameStatus.FAILED)
             return False
     except (OSError, subprocess.SubprocessError) as e:
         logger.error(f"DOWNLOADER ERROR: Transfer failed for {name}: {e}")

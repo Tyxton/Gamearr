@@ -1,3 +1,4 @@
+from gzip import BadGzipFile
 import subprocess
 import errno
 import os
@@ -59,6 +60,7 @@ def extract_pkg(pkg_path: Path, license_key: str, platform: str) -> bool:
                     return False
             except subprocess.TimeoutExpired:
                 proc.kill()
+                proc.wait()
                 logger.error(
                     "EXTRACTION CRITICAL: pkg2zip timed out after 2 hours.")
                 return False
@@ -71,20 +73,22 @@ def extract_pkg(pkg_path: Path, license_key: str, platform: str) -> bool:
                 return False
 
             for z_file in zip_files:
-                logger.info(
-                    f"EXTRACTION: Unpacking PSX/PSP archive: {z_file.name}")
-                with zipfile.ZipFile(z_file, 'r') as zip_ref:
-                    zip_ref.extractall(work_dir)
+                try:
+                    logger.info(
+                        f"EXTRACTION: Unpacking PSX/PSP archive: {z_file.name}")
+                    with zipfile.ZipFile(z_file, 'r') as zip_ref:
+                        zip_ref.extractall(work_dir)
+                    z_file.unlink()
 
-                z_file.unlink()
+                except (zipfile.BadZipFile, OSError) as ze:
+                    logger.error(f" EXTRACTION ERROR: Failed to unpack archive {
+                                 z_file.name}: {ze}")
+                    return False
 
         logger.info(f"Extraction block finalized in {work_dir}")
         return True
     except subprocess.CalledProcessError as e:
         logger.error(f"EXTRACTION ERROR: Subprocess trace failed: {e}")
-        return False
-    except zipfile.BadZipFile:
-        logger.error("EXRACTION ERROR: Created ZIP archive is corrupt.")
         return False
     except FileNotFoundError:
         logger.error(
