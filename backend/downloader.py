@@ -120,14 +120,13 @@ def download_pkg(url, title_id, name, expected_size: int):
 
 
 def update_progress(title_id: str, progress: float, size_current: int, size_total: int) -> None:
-    conn = database.get_db_connection()
-    conn.execute('''
-        UPDATE queue
-        SET progress = ?, size_current = ?, size_total = ?
-        WHERE title_id = ?
-    ''', (progress, size_current, size_total, title_id))
-    conn.commit()
-    conn.close()
+    '''
+    ARCHITECTURE: proxy for database.update_progress
+    The loop in download_pkg already enforces a 5-second debounce
+    to prevent saturating the write lock
+    '''
+    from backend import database
+    database.update_progress(title_id, progress, size_current, size_total)
 
 
 def get_safe_name(name: str, title_id: str | None = None) -> str:

@@ -99,6 +99,7 @@ def sync_database():
                     columns_to_insert = ['title_id', 'platform',
                                          'region', 'name', 'pkg_url', 'license_key']
                     records = db_ready_df[columns_to_insert].values.tolist()
+                    conn.execute("BEGIN IMMEDIATE")
                     conn.executemany(sql, records)
                     conn.commit()
                     logger.info(

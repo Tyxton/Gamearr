@@ -2,6 +2,11 @@ import secrets
 import sqlite3
 import pandas as pd
 import numpy as np
+import time
+import functools
+
+from collections.abc import Callable
+from typing import Any, cast
 
 from backend.logger import logger
 from backend.config import settings
@@ -82,6 +87,46 @@ def init_db():
     except sqlite3.Error as e:
         logger.error(f"STORAGE FATAL: Database Initialization dropped: {e}")
         return False
+
+
+def db_retry[F: Callable[..., Any]](_func: F | None = None, *, retries: int = 5, backoff: float = 0.2) -> F | Callable[[F], F]:
+    '''
+    ARCHTITECTURE: Decorative handler for SQLITE_BUSY errors.
+    exponential backoff for lock-relase wait.
+    '''
+    def decorator(func):
+        @functools.wraps(func)
+        def wrapper(*args, **kwargs):
+            last_err: sqlite3.OperationalError | None = None
+
+            for i in range(retries):
+                try:
+                    return func(*args, **kwargs)
+                except sqlite3.OperationalError as e:
+                    if "database is locked" not in str(e).lower():
+                        raise
+
+                    last_err = e
+                    if i == retries - 1:
+                        logger.error(f"DATABASE FATAL: {
+                                     func.__name__} exhausted {retries} retries.")
+                        raise
+
+                    sleep_time = backoff * (2 ** i)
+                    logger.warning(f"DATABASE BUSY: Retrying {func.__name__} ({
+                                   i+1}/{retries}) in {sleep_time: .2f}s...")
+                    time.sleep(sleep_time)
+
+            if last_err:
+                raise last_err
+            raise sqlite3.OperationalError(f"Database retry loop for {
+                                           func.__name__} failed.")
+
+        return cast(F, wrapper)
+
+    if _func is None:
+        return decorator
+    return decorator(_func)
 
 
 def get_config(key):
@@ -209,6 +254,7 @@ def search_game_db(query):
     return df.to_dict(orient='records')
 
 
+@db_retry()
 def add_to_queue(platform, title_id, region, name, pkg_url, license_key):
     conn = get_db_connection()
     clean_id = title_id.strip().upper()
@@ -230,12 +276,19 @@ def add_to_queue(platform, title_id, region, name, pkg_url, license_key):
         conn.close()
 
 
+@db_retry()
 def update_queue_status(title_id, status):
+    '''
+    ARCHTITECTURE: IMMEDIATE to lock the DB when write starts
+    '''
     conn = get_db_connection()
-    conn.execute("UPDATE queue SET status = ? WHERE title_id = ?",
-                 (status, title_id))
-    conn.commit()
-    conn.close()
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        conn.execute("UPDATE queue SET status = ? WHERE title_id = ?",
+                     (status, title_id))
+        conn.commit()
+    finally:
+        conn.close()
 
 
 def get_next_queued_task():
@@ -270,6 +323,23 @@ def update_queue_error(title_id: str, error_msg: str):
                  (error_msg, title_id))
     conn.commit()
     conn.close()
+
+
+def update_progress(title_id: str, progress: float, size_current: int, size_total: int) -> None:
+    '''
+    ARCHTITECTURE: Optimized progress updater for the UI
+    '''
+    conn = get_db_connection()
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        conn.execute('''
+            UPDATE queue
+            SET progress = ?, size_current = ?, size_total = ?
+            WHERE title_id = ?
+        ''', (progress, size_current, size_total, title_id))
+        conn.commit()
+    finally:
+        conn.close()
 
 
 def get_or_generate_api_key():
